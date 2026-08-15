@@ -1,3 +1,11 @@
+The license below applies to the OpenMEI source code authored by the
+project contributors. It does NOT apply to third-party material vendored
+under third_party/, which is distributed under its own terms. See
+third_party/README.md and the accompanying license files in each
+subdirectory.
+
+----------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) [year] [fullname]
