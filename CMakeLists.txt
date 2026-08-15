@@ -181,12 +181,16 @@ set(OPENMEI_SOURCES
    # src/camera/backends/ser_replay_backend.cpp  # replay a SER capture
 
     # --- measurement --------------------------------------------------------
-    #src/dimm/centroid.cpp        # background subtraction, thresholding, 1st moment
-    #src/dimm/centroid.h
+    src/dimm/centroid.cpp        # background subtraction, thresholding, 1st moment
+    src/dimm/centroid.h
     #src/dimm/statistics.cpp      # differential variance, noise-bias subtraction
     #src/dimm/statistics.h
-    #src/dimm/seeing.cpp          # variance -> r0 -> FWHM, airmass correction
-    #src/dimm/seeing.h
+    src/dimm/seeing.cpp          # variance -> r0 -> FWHM, airmass correction
+    src/dimm/seeing.h
+    src/dimm/config.h
+    src/dimm/processor.cpp
+    src/dimm/processor.h
+
     #src/dimm/calibration.cpp     # plate scale, exposure-time extrapolation
     #src/dimm/calibration.h
 
@@ -195,6 +199,10 @@ set(OPENMEI_SOURCES
     src/ui/camera_dialog.cpp
     src/ui/viewport.h
     src/ui/viewport.cpp
+    src/ui/settings_dialog.h
+    src/ui/settings_dialog.cpp
+    src/ui/dimm_panel.cpp
+    src/ui/dimm_panel.h
    
 )
 
