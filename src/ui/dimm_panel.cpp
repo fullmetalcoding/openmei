@@ -28,6 +28,10 @@ void spotRow(const char* name, const SpotMeasurement& s, double scale) {
     if (scale > 0.0) ImGui::Text("%.2f px / %.2f\"", s.fwhmPx, s.fwhmPx * scale);
     else             ImGui::Text("%.2f px", s.fwhmPx);
     ImGui::TableNextColumn();
+    // Ellipticity is where the wedge's chromatic streak shows up, and it is the
+    // observable that wind-shake rejection also keys off.
+    ImGui::Text("%.3f", s.ellipticity);
+    ImGui::TableNextColumn();
     if (s.saturated) ImGui::TextColored(kBad, "%.0f SAT", s.snr);
     else             ImGui::Text("%.0f", s.snr);
 }
@@ -81,13 +85,14 @@ void DimmPanel(bool* open, DimmProcessor& proc, const DimmConfig& cfg,
     // --- per-frame -----------------------------------------------------------
     if (st.haveLast) {
         ImGui::SeparatorText("Current frame");
-        if (ImGui::BeginTable("##spots", 6,
+        if (ImGui::BeginTable("##spots", 7,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Spot", ImGuiTableColumnFlags_WidthFixed, 42);
             ImGui::TableSetupColumn("x");
             ImGui::TableSetupColumn("y");
             ImGui::TableSetupColumn("flux");
             ImGui::TableSetupColumn("FWHM");
+            ImGui::TableSetupColumn("ellip");
             ImGui::TableSetupColumn("SNR");
             ImGui::TableHeadersRow();
             spotRow("A", st.last.a, scale);
@@ -127,6 +132,14 @@ void DimmPanel(bool* open, DimmProcessor& proc, const DimmConfig& cfg,
     ImGui::SeparatorText("Burst");
     ImGui::Text("Accepted %d / %d   (target %d)", st.nAccepted,
                 st.nAccepted + st.nRejected, cfg.burst.framesPerBurst);
+    if (st.satRejectFraction > 0.05) {
+        ImGui::TextColored(kBad, "%.0f%% rejected for saturation -- reduce gain",
+                           st.satRejectFraction * 100.0);
+        ImGui::SetItemTooltip(
+            "With t/2t interleaving the long leg carries twice the signal, so "
+            "gain must be set for 2t rather than t. Aim for roughly 40%% of full "
+            "scale at t, which leaves 2t clear of the ceiling.");
+    }
     ImGui::Text("Mean separation: %.3f px", st.meanSepPx);
     ImGui::Text("Flux ratio B/A: %.3f", st.fluxRatio);
     ImGui::SameLine();
@@ -141,6 +154,47 @@ void DimmPanel(bool* open, DimmProcessor& proc, const DimmConfig& cfg,
     if (scale > 0.0) { ImGui::SameLine(); ImGui::Text("(%.4f\")", sL * scale); }
     ImGui::Text("sigma_tran = %.4f px", sT);
     if (scale > 0.0) { ImGui::SameLine(); ImGui::Text("(%.4f\")", sT * scale); }
+
+    // --- exposure bias -------------------------------------------------------
+    if (st.interleaving) {
+        ImGui::SeparatorText("Exposure-time bias");
+        if (st.synthesizing) {
+            ImGui::Text("2t synthesized from frame pairs at %.2f ms",
+                        st.currentExposureUs / 1000.0);
+            ImGui::SameLine();
+            ImGui::TextColored(st.dutyCycle > 0.8 ? kGood
+                             : (st.dutyCycle > 0.5 ? kWarn : kBad),
+                               "duty %.0f%%", st.dutyCycle * 100.0);
+            ImGui::SetItemTooltip(
+                "A real 2t exposure integrates continuously; a synthesized one "
+                "skips the readout gap between frames. The two agree at 100%% "
+                "duty. Below that the synthesized leg averages slightly less "
+                "than a true 2t exposure would, making the correction mildly "
+                "conservative. Lengthen exposure or shrink the ROI to raise it.");
+        } else {
+            ImGui::Text("Alternating: %.2f ms", st.currentExposureUs / 1000.0);
+        }
+        ImGui::Text("samples at t: %d, at 2t: %d", st.nAtT, st.nAt2T);
+        if (st.fwhmAtT > 0.0 && st.fwhmAt2T > 0.0) {
+            ImGui::Text("seeing at t = %.3f\"   at 2t = %.3f\"",
+                        st.fwhmAtT, st.fwhmAt2T);
+            ImGui::TextColored(kWarn, "correction x%.3f", st.exposureCorrection);
+            ImGui::SetItemTooltip(
+                "Extrapolation to zero exposure. A finite exposure averages "
+                "correlated image motion and biases seeing low, by more at "
+                "longer exposure -- the pair of measurements pins down how much. "
+                "A large factor is not an error, but it does mean the answer "
+                "leans heavily on the correction.");
+        } else {
+            ImGui::TextColored(kDim, "collecting both exposures...");
+        }
+    } else {
+        ImGui::SeparatorText("Exposure-time bias");
+        ImGui::TextColored(kWarn, "Interleaving off -- seeing will read low.");
+        ImGui::SetItemTooltip("Enable in Settings > Statistics. Uncorrected "
+                              "results are biased by roughly 17%% when exposure "
+                              "equals the coherence time, and much more beyond.");
+    }
 
     // --- result --------------------------------------------------------------
     if (st.haveResult) {

@@ -279,6 +279,28 @@ void SettingsDialog::drawStatistics(DimmConfig& cfg) {
         "double and extrapolating to zero is the standard correction, and at any "
         "usable exposure it is a substantial fraction of the answer rather than "
         "a refinement.");
+    int pm = int(b.pairing);
+    if (ImGui::Combo("2t source", &pm,
+                     "Synthesized from frame pairs\0Physically alternate exposure\0"))
+        b.pairing = ExposurePairing(pm);
+    if (b.pairing == ExposurePairing::Synthesized) {
+        ImGui::TextWrapped(
+            "Pairs consecutive frames and combines their centroids -- the "
+            "centroid of a summed image is the flux-weighted mean of the "
+            "individual centroids, so no pixel work is needed. Exposure never "
+            "changes, so gain is set for t alone rather than compromised for "
+            "the long leg, and both series come from identical conditions. "
+            "Approximate only in skipping the readout gap between frames.");
+    } else {
+        ImGui::TextWrapped(
+            "Exact, but gain must be set so the 2t leg does not clip -- which "
+            "costs SNR on the t leg -- and switching needs settle frames. Useful "
+            "as a cross-check: if the two modes disagree, the synthesized "
+            "duty-cycle approximation is not holding.");
+        ImGui::InputInt("Block length (frames)", &b.interleaveBlockFrames);
+        ImGui::InputInt("Settle frames", &b.interleaveSettleFrames);
+    }
+
     int expUs = int(b.baseExposureUs);
     if (ImGui::InputInt("Base exposure t (us)", &expUs, 100, 1000))
         b.baseExposureUs = std::max(32, expUs);

@@ -111,6 +111,12 @@ SeeingResult computeSeeing(double varLongPx2, double varTranPx2,
                            int framesUsed, int framesRejected,
                            const DimmConfig&);
 
+// Replace a result's seeing with an exposure-corrected value and re-derive
+// everything that depends on it. Keeps the zenith correction and r0 consistent
+// instead of leaving a result whose fields disagree with each other.
+void applyCorrectedSeeing(SeeingResult&, double correctedFwhmArcsec,
+                          const DimmConfig&);
+
 const char* toString(ScaleMethod);
 const char* toString(CoefficientModel);
 const char* toString(WedgeOrientation);

@@ -213,6 +213,27 @@ SeeingResult computeSeeing(double varLongPx2, double varTranPx2,
     return out;
 }
 
+void applyCorrectedSeeing(SeeingResult& r, double corrected,
+                          const DimmConfig& cfg) {
+    if (!r.valid || corrected <= 0.0 || r.fwhmArcsec <= 0.0) return;
+    const double lambda = cfg.reporting.wavelengthNm * 1e-9;
+
+    r.exposureCorrectionFactor = corrected / r.fwhmArcsec;
+    r.fwhmArcsec = corrected;
+    r.r0 = r0FromFwhm(corrected / kArcsecPerRad, lambda);
+
+    const double alt = cfg.site.manualAltitudeDeg;
+    if (cfg.reporting.zenithCorrect) {
+        r.fwhmZenithArcsec = seeingToZenith(r.fwhmArcsec, alt);
+        r.r0Zenith         = r0ToZenith(r.r0, alt);
+    } else {
+        r.fwhmZenithArcsec = r.fwhmArcsec;
+        r.r0Zenith         = r.r0;
+    }
+    const double fracVar = std::sqrt(2.0 / std::max(1, r.framesUsed - 1));
+    r.sigmaArcsec = r.fwhmZenithArcsec * 0.6 * fracVar;
+}
+
 bool DimmConfig::canMeasure(std::string& why) const {
     if (!calibration.valid()) {
         why = "plate scale is not calibrated -- run the drift calibration "

@@ -65,6 +65,16 @@ void CameraDialog::draw(CameraRegistry& reg, const ResultFn& onResult) {
 
             ImGui::TableNextColumn();
             ImGui::TextWrapped("%s", b.message.c_str());
+            if (!b.diagnostics.empty()) {
+                ImGui::PushID(b.id.c_str());
+                if (ImGui::TreeNode("details")) {
+                    ImGui::TextUnformatted(b.diagnostics.c_str());
+                    if (ImGui::SmallButton("Copy")) 
+                        ImGui::SetClipboardText(b.diagnostics.c_str());
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
         }
         ImGui::EndTable();
     }

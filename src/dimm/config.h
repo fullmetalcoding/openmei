@@ -136,6 +136,23 @@ struct CentroidConfig {
 //  Burst statistics
 // -----------------------------------------------------------------------------
 
+// How the 2t leg of the exposure-bias correction is obtained.
+enum class ExposurePairing {
+    // Pair consecutive t frames and combine their centroids. The centroid of a
+    // summed image is the flux-weighted mean of the individual centroids, so no
+    // pixel work is needed. Gain is set for t alone, both series come from
+    // identical conditions, and nothing has to switch mid-run.
+    //
+    // Approximate in one respect: a real 2t exposure integrates continuously,
+    // while a synthesized one skips the readout gap. Exact only at 100% duty
+    // cycle, so the duty cycle is measured and reported.
+    Synthesized,
+    // Physically alternate the camera between t and 2t. Exact, but gain must be
+    // set for the long leg -- costing SNR on the short one -- and the switching
+    // introduces settle frames.
+    PhysicalAlternation
+};
+
 struct BurstConfig {
     int    framesPerBurst   = 500;
     double publishIntervalS = 60.0;
@@ -146,6 +163,15 @@ struct BurstConfig {
     // not optional at any exposure worth using.
     bool    interleaveExposures = true;
     int64_t baseExposureUs      = 5000;
+    ExposurePairing pairing = ExposurePairing::Synthesized;
+
+    // Alternate in blocks rather than frame by frame. Exposure changes take
+    // effect some frames after the call, so per-frame alternation would spend
+    // most of its time in an indeterminate state.
+    int interleaveBlockFrames = 50;
+    // Frames discarded after each switch. FrameMeta reports what the driver
+    // believed was in force, which can lead the hardware by a frame or two.
+    int interleaveSettleFrames = 3;
 
     // Photon noise adds variance and biases seeing HIGH -- the opposite
     // direction. Estimated from per-frame SNR and subtracted.

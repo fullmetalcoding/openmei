@@ -189,6 +189,15 @@ static void startStream(MeiApp& app) {
 
     // Analysis sees every frame; the display tap deliberately does not.
     app.processor.setConfig(app.dimm);
+    // The processor drives the t/2t alternation but never touches the camera.
+    app.processor.setExposureSetter([&app](int64_t us) {
+        ICamera* c = app.cameras.camera();
+        if (!c) return false;
+        std::string e;
+        const bool ok = c->setExposureUs(us, e);
+        if (ok) app.want.exposureUs = c->config().exposureUs;
+        return ok;
+    });
     const bool synth = app.isSynthetic();
     app.stream.setAnalysisSink([&app, synth](const Frame& f) {
         app.processor.onFrame(f, synth);

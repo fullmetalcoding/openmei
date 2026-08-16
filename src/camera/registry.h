@@ -17,6 +17,7 @@ struct BackendStatus {
     bool        loaded = false;
     std::string sdkVersion;
     std::string message;        // why it failed, in user-actionable terms
+    std::string diagnostics;    // detail for when "loaded but empty" needs explaining
     int         cameraCount = 0;
 };
 

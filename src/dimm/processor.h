@@ -13,6 +13,7 @@
 #include "dimm/seeing.h"
 
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -40,6 +41,26 @@ struct DimmSample {
     std::string rejectReason;
 };
 
+// One Welford pair per exposure setting. Frames are binned by what their own
+// metadata reports, never by call order -- exposure changes land some frames
+// after the request, so ordering is not a reliable key.
+struct VarianceAccumulator {
+    int    n = 0;
+    double meanL = 0, m2L = 0;
+    double meanT = 0, m2T = 0;
+    double noiseSum = 0;
+
+    void reset() { *this = VarianceAccumulator{}; }
+    void add(double projL, double projT) {
+        ++n;
+        const double dL = projL - meanL; meanL += dL / n; m2L += dL * (projL - meanL);
+        const double dT = projT - meanT; meanT += dT / n; m2T += dT * (projT - meanT);
+    }
+    double varL() const { return n > 1 ? m2L / (n - 1) : 0.0; }
+    double varT() const { return n > 1 ? m2T / (n - 1) : 0.0; }
+    double meanNoise() const { return n > 0 ? noiseSum / n : 0.0; }
+};
+
 struct DimmStatus {
     DimmState   state = DimmState::Idle;
     std::string message;
@@ -61,6 +82,22 @@ struct DimmStatus {
     double fluxRatio = 0.0;
     double frameRate = 0.0;
 
+    // Interleave state, surfaced so the correction is auditable rather than
+    // something that silently scales the answer.
+    bool    interleaving = false;
+    int64_t currentExposureUs = 0;
+    int     nAtT = 0, nAt2T = 0;
+    double  fwhmAtT = 0.0, fwhmAt2T = 0.0;
+    double  exposureCorrection = 1.0;
+    // Saturation is the one rejection cause that is nearly always a setup
+    // error rather than a condition, so it is worth calling out separately.
+    double  satRejectFraction = 0.0;
+    // Fraction of wall time actually spent integrating. The synthesized 2t leg
+    // is exact only at 100%; below that it slightly understates the averaging a
+    // real 2t exposure would do, so the correction is mildly conservative.
+    double  dutyCycle = 0.0;
+    bool    synthesizing = false;
+
     SeeingResult result;
     bool         haveResult = false;
 
@@ -78,6 +115,10 @@ class DimmProcessor {
 public:
     void setConfig(const DimmConfig& c);
     DimmConfig config() const;
+
+    // Wired to the camera by the caller. The processor requests exposure
+    // changes; it never touches the camera itself.
+    void setExposureSetter(std::function<bool(int64_t)> fn);
 
     void begin();          // -> Acquiring
     void stopMeasuring();  // -> Idle
@@ -103,7 +144,34 @@ private:
     double axisUx_ = 1, axisUy_ = 0;    // longitudinal unit vector
     int    lostFrames_ = 0;
 
-    // Welford accumulators on the projected separation.
+    // acc_[0] collects the base exposure t, acc_[1] the doubled exposure 2t.
+    // With interleaving off only acc_[0] is used.
+    VarianceAccumulator acc_[2];
+    int     blockCount_ = 0;
+    int     settleCount_ = 0;
+    int     activeSlot_ = 0;        // which exposure we have REQUESTED
+    int     satRejects_ = 0;
+
+    // Half of a synthesized 2t sample, held until its partner arrives. Pairs
+    // are non-overlapping: sharing a frame between consecutive pairs would
+    // correlate them and bias the variance.
+    struct PendingHalf {
+        bool     have = false;
+        uint64_t sequence = 0;
+        double   ax = 0, ay = 0, bx = 0, by = 0;
+        double   fa = 0, fb = 0;
+        double   noiseVar = 0;
+    } pending_;
+
+    double lastNoiseVar_ = 0.0;
+    double intervalEmaNs_ = 0.0;
+    int64_t lastArrivalNs_ = 0;
+    int64_t requestedUs_ = 0;
+    std::function<bool(int64_t)> exposureSetter_;
+
+    // Combined Welford across both exposures. Not used for the inversion --
+    // that reads from acc_[] so the two exposures stay separated -- but it
+    // drives the live sigma readout, which should reflect everything measured.
     int    n_ = 0;
     double meanL_ = 0, m2L_ = 0;
     double meanT_ = 0, m2T_ = 0;
