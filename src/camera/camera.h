@@ -205,6 +205,11 @@ struct Caps {
 
     bool hasHardwareBin = false;
 
+    // Dual conversion gain as an explicit control. ZWO hides this behind a
+    // magic gain threshold that moves between SDK revisions; the ToupTek family
+    // exposes it, so it can actually be set and recorded.
+    bool hasConversionGain = false;
+
     // True when binning is being done on the host rather than on the sensor,
     // which means a binned ROI still reads out and transfers at full sensor
     // resolution. Set by the backend after configure(), from what actually
@@ -226,6 +231,7 @@ struct StreamConfig {
     // true monochrome and the backend reports Mono8/Mono16 with no CFA.
     bool        monoBin     = false;
     bool        hardwareBin = false;   // on-sensor binning where supported
+    int         conversionGain = 1;    // 0 = LCG, 1 = HCG, 2 = HDR where offered
 };
 
 // -----------------------------------------------------------------------------
@@ -314,5 +320,6 @@ public:
 
 std::unique_ptr<IBackend> makeAsiBackend();
 std::unique_ptr<IBackend> makeSvbonyBackend();
+std::unique_ptr<IBackend> makeToupcamBackend();
 
 } // namespace mei

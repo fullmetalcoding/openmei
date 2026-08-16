@@ -18,6 +18,12 @@ CameraRegistry::CameraRegistry() {
 #ifdef MEI_HAVE_SVBONY
     backends_.push_back(makeSvbonyBackend());
 #endif
+#ifdef MEI_HAVE_TOUPTEK
+    // Covers ToupTek plus every OEM rebadge -- Altair, OGMA, RisingCam, Omegon,
+    // Bresser, Mallincam, StarShoot G, and SVBony's ToupTek-sourced models,
+    // which their own SVBCameraSDK does not enumerate.
+    backends_.push_back(makeToupcamBackend());
+#endif
     // Future: Touptek (push/callback), QHY, Player One, INDI, SER replay.
 }
 
