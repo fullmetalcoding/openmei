@@ -1,5 +1,5 @@
 ﻿<p align="center">
-  <img src="docs/openmei-logo.png" alt="OpenMEI logo" width="420">
+  <img src="docs/logo.png" alt="OpenMEI logo" width="420">
 </p>
 
 # OpenMEI
