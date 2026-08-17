@@ -262,6 +262,7 @@ For an 80 mm unobstructed telescope, a practical mask might use approximately:
 The exact geometry should be chosen so that neither aperture is vignetted.
 
 [`masks/`](masks/) contains STL/step files for 3d printable masks. Currently available are: 
+
 [`/masks/DIM_MASK_80MMx53x25.4.stl`](DIM_MASK_80MMx53x25.4.stl) A bare bones basic mask for an 80 mm class scope with sub aperture size 25.4mm and separation 53mm. Designed and tested on an Orion ST80. 
 
 ---
@@ -281,6 +282,12 @@ The direction of the wedge-induced image separation must also be known relative 
 This is important because the longitudinal and transverse variances use different response coefficients.
 
 OpenMEI therefore records the wedge orientation as part of the instrument configuration.
+
+A good prism wedge angle would be something less than 5-10 arc minutes, however you may find these to be exceeding difficult to find. 
+
+Be sure to search for "wedge window" instead of "wedge prism," as manufacturers tend to call very shallow angles windows instead.
+
+If that is the case, consider building a Risley prism (not covered here), in which case, you should be OK to use a pair of wedge prisms roughly 30 arcmin->1 degree instead of a single wedge window.
 
 ---
 
