@@ -67,14 +67,11 @@ Atmospheric turbulence causes the local wavefront slope over each sub-aperture t
 
 The fundamental DIMM measurement is not the absolute position of either star image. It is their separation:
 
-[
+```math
 \Delta x = x_2-x_1
-]
 
-[
 \Delta y = y_2-y_1
-]
-
+```
 Because telescope tracking errors, mount vibration, and much of the mechanical motion move both images together, subtracting the two centroid positions strongly rejects common-mode motion.
 
 This is the key advantage of the DIMM technique.
@@ -90,68 +87,68 @@ The differential displacement is resolved into two components relative to the ba
 
 For each acquired burst, OpenMEI determines the variance of both components:
 
-[
+```math
 \sigma_l^2
-]
+```
 
 and
 
-[
+```math
 \sigma_t^2
-]
+```
 
 Under Kolmogorov turbulence, these variances are related to the atmospheric coherence length, or **Fried parameter**, (r_0).
 
 OpenMEI represents the relationship as
 
-[
+```math
 \sigma^2 =
 K \lambda^2 D^{-1/3} r_0^{-5/3}
-]
+```
 
 where:
 
-* (D) is the sub-aperture diameter
-* (d) is the center-to-center aperture separation
-* (\lambda) is the reporting wavelength
-* (K) is the longitudinal or transverse DIMM response coefficient
-* (r_0) is the Fried parameter
+* $D$ is the sub-aperture diameter
+* $d$ is the center-to-center aperture separation
+* $\lambda$ is the reporting wavelength
+* $K$ is the longitudinal or transverse DIMM response coefficient
+* $r_0$ is the Fried parameter
 
 The geometry is commonly represented by
 
-[
+```math
 b = \frac{d}{D}
-]
+```
 
 For the classic Sarazin & Roddier approximation, OpenMEI uses
 
-[
+```math
 K_l =
 2c
 \left[
 1-\frac{0.0968}{c}b^{-1/3}
 \right]
-]
+```
 
 and
 
-[
+```math
 K_t =
 2c
 \left[
 1-\frac{0.1450}{c}b^{-1/3}
 \right]
-]
+```
 
-where (c=0.179) for the original Sarazin & Roddier formulation.
+where $c=0.179$ for the original Sarazin & Roddier formulation.
 
 OpenMEI also provides the corrected (c=0.182) coefficient discussed in the mini-DIMM analysis by Yu et al.
 
 The classic approximation should normally be used with
 
-[
+```math
 \frac{d}{D} \ge 2
-]
+```
 
 For smaller aperture separations, more exact DIMM response coefficients should be used instead.
 
@@ -159,29 +156,29 @@ For smaller aperture separations, more exact DIMM response coefficients should b
 
 ## From differential motion to seeing
 
-Once (r_0) has been estimated, OpenMEI converts it to the conventional long-exposure seeing FWHM using
+Once $r_0$ has been estimated, OpenMEI converts it to the conventional long-exposure seeing FWHM using
 
-[
+```math
 \epsilon = 0.98\frac{\lambda}{r_0}
-]
+```
 
-where (\epsilon) is in radians.
+where $\epsilon$ is in radians.
 
 OpenMEI normally reports seeing at the conventional reference wavelength of **500 nm**.
 
 Because the amount of atmosphere traversed increases away from the zenith, measurements can also be normalized to zenith.
 
-For zenith angle (z),
+For zenith angle $z$,
 
-[
+```math
 r_0(z) \propto (\cos z)^{3/5}
-]
+```
 
 and therefore seeing scales as
 
-[
+```math
 \epsilon(z) \propto (\cos z)^{-3/5}
-]
+```
 
 OpenMEI can report both the DIMM line-of-sight seeing and the equivalent zenith seeing.
 
@@ -224,20 +221,20 @@ The mask contains two equal circular apertures.
 
 Define:
 
-* (D) = sub-aperture diameter
-* (d) = center-to-center separation
+* $D$ = sub-aperture diameter
+* $d$ = center-to-center separation
 
 For use with the classic Sarazin & Roddier approximation, choose approximately
 
-[
+```math
 d \ge 2D
-]
+```
 
 while keeping the apertures as widely separated as the telescope entrance pupil permits.
 
 The mask should be rigid and located at or very near the telescope entrance pupil.
 
-The physical dimensions used for the measurement must be entered accurately in OpenMEI. Errors in (D) and (d) propagate directly into the inferred seeing.
+The physical dimensions used for the measurement must be entered accurately in OpenMEI. Errors in $D$ and $d$ propagate directly into the inferred seeing.
 
 ### Example
 
@@ -317,7 +314,7 @@ A DIMM attempts to measure the instantaneous image motion produced by atmospheri
 
 A long camera exposure averages that motion and therefore reduces the measured differential variance. The result is a systematic bias toward artificially good seeing.
 
-OpenMEI supports paired short exposures (t) and (2t) and applies the modified exponential extrapolation described by Tokovinin to estimate the zero-exposure seeing.
+OpenMEI supports paired short exposures $t$ and $2t$ and applies the modified exponential extrapolation described by Tokovinin to estimate the zero-exposure seeing.
 
 The default base exposure is currently:
 
@@ -354,11 +351,11 @@ OpenMEI supports several scale sources, but **measured calibration is preferred 
 
 The recommended method is a stellar drift calibration.
 
-For a star at declination (\delta), the sidereal drift rate is approximately
+For a star at declination $\delta$, the sidereal drift rate is approximately
 
-[
+```math
 15.041 \cos(\delta)
-]
+```
 
 arcseconds per second.
 
@@ -533,7 +530,7 @@ OpenMEI estimates this contribution and can subtract the corresponding variance 
 
 ### Poor aperture geometry
 
-The classic Sarazin & Roddier approximation becomes progressively less reliable as (d/D) becomes small.
+The classic Sarazin & Roddier approximation becomes progressively less reliable as $d/D$ becomes small.
 
 OpenMEI warns when the geometry falls below the normal validity range.
 
@@ -598,7 +595,7 @@ This is the principal reference for the classical DIMM method used by OpenMEI.
 
 The longitudinal and transverse differential image-motion equations implemented by OpenMEI are derived from the Sarazin & Roddier approximation:
 
-[
+```math
 \sigma_l^2 =
 2\lambda^2r_0^{-5/3}
 \left(
@@ -607,11 +604,11 @@ The longitudinal and transverse differential image-motion equations implemented 
 
 0.0968d^{-1/3}
 \right)
-]
+```
 
 and
 
-[
+```math
 \sigma_t^2 =
 2\lambda^2r_0^{-5/3}
 \left(
@@ -620,7 +617,7 @@ and
 
 0.145d^{-1/3}
 \right).
-]
+```
 
 The OpenMEI implementation rearranges these expressions into geometry-dependent response coefficients (K_l) and (K_t).
 
@@ -645,23 +642,23 @@ OpenMEI's paired-exposure seeing correction is based on the modified exponential
 
 For seeing estimates (\epsilon_1) and (\epsilon_2) obtained at exposures (t) and (2t),
 
-[
+```math
 c =
 \left(
 \frac{\epsilon_1}{\epsilon_2}
 \right)^{3/4}
-]
+```
 
 and OpenMEI evaluates
 
-[
+```math
 \epsilon_0 =
 \frac{1}{2}
 \left(
 c\epsilon_1 +
 c^{7/3}\epsilon_2
 \right)
-]
+```
 
 as an estimate of the zero-exposure seeing.
 
@@ -678,9 +675,9 @@ Yu et al. compare the commonly used Sarazin & Roddier approximation with the mor
 
 The work also emphasizes that the classical approximation is reliable for approximately
 
-[
+```math
 d/D \ge 2
-]
+```
 
 while more accurate coefficients become increasingly important for smaller baseline-to-aperture ratios.
 
