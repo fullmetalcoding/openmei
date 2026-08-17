@@ -267,7 +267,7 @@ The exact geometry should be chosen so that neither aperture is vignetted.
 
 ---
 
-## 3. Wedge prism
+## 3. Wedge prism/Wedge window
 
 One aperture must produce a displaced image of the star.
 
@@ -283,9 +283,9 @@ This is important because the longitudinal and transverse variances use differen
 
 OpenMEI therefore records the wedge orientation as part of the instrument configuration.
 
-A good prism wedge angle would be something less than 5-10 arc minutes, however you may find these to be exceeding difficult to find. 
-
 Be sure to search for "wedge window" instead of "wedge prism," as manufacturers tend to call very shallow angles windows instead.
+
+A good prism wedge angle would be something less than 5-10 arc minutes, however you may find these to be exceeding difficult to find. 
 
 If that is the case, consider building a Risley prism (not covered here), in which case, you should be OK to use a pair of wedge prisms roughly 30 arcmin->1 degree instead of a single wedge window.
 
