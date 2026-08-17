@@ -807,7 +807,7 @@ static void CentralArea(MeiApp& app) {
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
     if (ImGui::Begin("##Central", nullptr, flags)) {
-        ImGui::TextDisabled("OpenMei");
+        ImGui::TextDisabled("OpenMEI");
         ImGui::Separator();
         if (!app.cameras.connected()) {
             ImGui::TextWrapped("No camera connected.  Camera > Connect...");
@@ -1100,7 +1100,7 @@ static void CentralArea(MeiApp& app) {
 
 static void fatal(const char* what) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: %s", what, SDL_GetError());
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OpenMei", what, nullptr);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OpenMEI", what, nullptr);
 }
 
 int main(int, char**) {
@@ -1120,7 +1120,7 @@ int main(int, char**) {
     const SDL_WindowFlags winFlags =
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
-    SDL_Window* window = SDL_CreateWindow("OpenMei", 1280, 800, winFlags);
+    SDL_Window* window = SDL_CreateWindow("OpenMEI", 1280, 800, winFlags);
     if (!window) { fatal("SDL_CreateWindow failed"); SDL_Quit(); return 1; }
     SDL_SetWindowMinimumSize(window, 800, 500);
 
