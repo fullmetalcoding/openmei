@@ -261,6 +261,9 @@ For an 80 mm unobstructed telescope, a practical mask might use approximately:
 
 The exact geometry should be chosen so that neither aperture is vignetted.
 
+[`masks/`] contains STL/step files for 3d printable masks. Currently available are: 
+[`/masks/DIM_MASK_80MMx53x25.4.stl`] A bare bones basic mask for an 80 mm class scope with sub aperture size 25.4mm and separation 53mm. Designed and tested on an Orion ST80. 
+
 ---
 
 ## 3. Wedge prism
