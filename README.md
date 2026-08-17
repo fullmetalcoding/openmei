@@ -6,7 +6,7 @@
 
 **OpenMEI** is an open-source **Differential Image Motion Monitor (DIMM)** application for measuring astronomical seeing.
 
-It acquires short-exposure images of a star through a two-aperture DIMM mask, measures the differential motion of the resulting stellar images, and converts the longitudinal and transverse image-motion variances into estimates of the Fried parameter (r_0) and atmospheric seeing.
+It acquires short-exposure images of a star through a two-aperture DIMM mask, measures the differential motion of the resulting stellar images, and converts the longitudinal and transverse image-motion variances into estimates of the Fried parameter $r_0$ and atmospheric seeing.
 
 OpenMEI is intended both as a practical seeing monitor and as an instrument whose measurement chain can be inspected, calibrated, reproduced, and validated.
 
@@ -14,7 +14,7 @@ Current features include:
 
 * Real-time camera acquisition and centroid tracking
 * Longitudinal and transverse differential image-motion measurement
-* Fried parameter (r_0) estimation
+* Fried parameter $r_0$ estimation
 * Seeing FWHM estimation
 * Zenith correction
 * Projection of seeing onto a separate science target altitude
