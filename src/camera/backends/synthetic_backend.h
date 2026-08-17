@@ -77,6 +77,9 @@ struct SyntheticParams {
     double staticOffsetX = 0.0;   // sub-pixel offset applied to both spots
     double staticOffsetY = 0.0;
     bool   noiseFree     = false; // no shot or read noise -- Tier 0 only
+    // Skip frame pacing. Tests need thousands of frames; waiting out real
+    // exposure time would make the suite take minutes instead of seconds.
+    bool   freeRun       = false;
 
     // --- faults, for testing the guards --------------------------------------
     bool injectHotPixels = false;

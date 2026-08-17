@@ -23,111 +23,145 @@ const char* toString(DimmState s) {
 }
 
 void DimmProcessor::setConfig(const DimmConfig& c) {
-    std::lock_guard<std::mutex> lk(m_);
+    std::lock_guard<std::mutex> lk(cfgM_);
     cfg_ = c;
 }
 
 DimmConfig DimmProcessor::config() const {
-    std::lock_guard<std::mutex> lk(m_);
+    std::lock_guard<std::mutex> lk(cfgM_);
     return cfg_;
 }
 
 void DimmProcessor::setExposureSetter(std::function<bool(int64_t)> fn) {
-    std::lock_guard<std::mutex> lk(m_);
+    std::lock_guard<std::mutex> lk(cfgM_);
     exposureSetter_ = std::move(fn);
 }
 
-void DimmProcessor::begin() {
-    std::lock_guard<std::mutex> lk(m_);
-    st_ = DimmStatus{};
-    st_.state = DimmState::Acquiring;
-    st_.message = "searching for spot pair";
+// Requests only. The grab thread applies them at a frame boundary, so the UI
+// never touches working state and never waits on the measurement.
+void DimmProcessor::begin()         { command_ = Command::Begin; }
+void DimmProcessor::stopMeasuring() { command_ = Command::Stop; }
+void DimmProcessor::resetBurst()    { command_ = Command::ResetBurst; }
+
+DimmStatus DimmProcessor::status() const {
+    std::lock_guard<std::mutex> lk(statusM_);
+    return published_;
+}
+
+void DimmProcessor::publish() {
+    std::lock_guard<std::mutex> lk(statusM_);
+    published_ = work_;
+}
+
+void DimmProcessor::applyBegin(const DimmConfig& cfg) {
+    work_ = DimmStatus{};
+    work_.state = DimmState::Acquiring;
+    work_.message = "searching for spot pair";
+    lastAcquireNs_ = 0;
     n_ = 0; meanL_ = m2L_ = meanT_ = m2T_ = 0.0;
     sumSep_ = sumFa_ = sumFb_ = sumNoiseVarPx2_ = 0.0;
     sepEma_ = 0.0;
     lostFrames_ = 0;
+    burstCounter_ = 0;
+    lagSumProd_ = 0.0; lagN_ = 0; havePrevProj_ = false;
     acc_[0].reset(); acc_[1].reset();
     blockCount_ = settleCount_ = 0;
     activeSlot_ = 0;
     satRejects_ = 0;
-    st_.interleaving = cfg_.burst.interleaveExposures;
-    st_.synthesizing = st_.interleaving &&
-                       cfg_.burst.pairing == ExposurePairing::Synthesized;
+    work_.interleaving = cfg.burst.interleaveExposures;
+    work_.synthesizing = work_.interleaving &&
+                       cfg.burst.pairing == ExposurePairing::Synthesized;
     pending_ = PendingHalf{};
     intervalEmaNs_ = 0.0;
     lastArrivalNs_ = 0;
     // Only the physical mode touches the camera. Synthesizing leaves exposure
     // alone entirely, which is most of why it is simpler.
-    if (st_.interleaving && !st_.synthesizing && exposureSetter_) {
-        requestedUs_ = cfg_.burst.baseExposureUs;
-        exposureSetter_(requestedUs_);
-        settleCount_ = cfg_.burst.interleaveSettleFrames;
+    if (work_.interleaving && !work_.synthesizing && localSetter_) {
+        requestedUs_ = cfg.burst.baseExposureUs;
+        localSetter_(requestedUs_);
+        settleCount_ = cfg.burst.interleaveSettleFrames;
     }
 }
 
-void DimmProcessor::stopMeasuring() {
-    std::lock_guard<std::mutex> lk(m_);
-    st_.state = DimmState::Idle;
-    st_.message = "stopped";
+void DimmProcessor::applyStop() {
+    work_.state = DimmState::Idle;
+    work_.message = "stopped";
 }
 
-void DimmProcessor::resetBurst() {
-    std::lock_guard<std::mutex> lk(m_);
+void DimmProcessor::applyResetBurst() {
     n_ = 0; meanL_ = m2L_ = meanT_ = m2T_ = 0.0;
     sumSep_ = sumFa_ = sumFb_ = sumNoiseVarPx2_ = 0.0;
-    st_.nAccepted = st_.nRejected = 0;
-    st_.varLongPx2 = st_.varTranPx2 = 0.0;
-}
-
-DimmStatus DimmProcessor::status() const {
-    std::lock_guard<std::mutex> lk(m_);
-    return st_;
+    work_.nAccepted = work_.nRejected = 0;
+    work_.varLongPx2 = work_.varTranPx2 = 0.0;
 }
 
 void DimmProcessor::onFrame(const Frame& f, bool isSynthetic) {
-    std::lock_guard<std::mutex> lk(m_);
-    if (st_.state == DimmState::Idle) return;
+    // Pick up the config once per frame, then run entirely unlocked.
+    {
+        std::lock_guard<std::mutex> lk(cfgM_);
+        localCfg_    = cfg_;
+        localSetter_ = exposureSetter_;
+    }
 
-    if (st_.state == DimmState::Acquiring) {
+    switch (command_.exchange(Command::None)) {
+        case Command::Begin:      applyBegin(localCfg_); break;
+        case Command::Stop:       applyStop();       break;
+        case Command::ResetBurst: applyResetBurst(); break;
+        default: break;
+    }
+
+    if (work_.state == DimmState::Idle) { publish(); return; }
+
+    if (work_.state == DimmState::Acquiring) {
+        // Retrying a full-frame search at frame rate is pure waste, and when
+        // the threshold is badly set it is what makes the UI unusable.
+        const int64_t now = f.meta.hostArrivalNs;
+        if (lastAcquireNs_ != 0 && now - lastAcquireNs_ < 250'000'000) {
+            publish();
+            return;
+        }
+        lastAcquireNs_ = now;
         acquire(f);
-        if (st_.state == DimmState::Acquiring) return;
+        if (work_.state == DimmState::Acquiring) { publish(); return; }
     }
     track(f);
 
     // Ground-truth comparison. Only the synthetic source can do this, and it is
     // the only way to separate centroider error from everything downstream.
-    if (isSynthetic && st_.haveLast) {
+    if (isSynthetic && work_.haveLast) {
         SyntheticTruth t;
         if (syntheticTruthFor(f.meta.sequence, t)) {
-            const double dax = st_.last.a.x - t.ax, day = st_.last.a.y - t.ay;
-            const double dbx = st_.last.b.x - t.bx, dby = st_.last.b.y - t.by;
-            st_.haveTruth = true;
-            st_.truthResidualAPx = std::sqrt(dax * dax + day * day);
-            st_.truthResidualBPx = std::sqrt(dbx * dbx + dby * dby);
-            st_.truthDiffLongPx  = t.diffLongPx;
-            st_.truthDiffTranPx  = t.diffTranPx;
+            const double dax = work_.last.a.x - t.ax, day = work_.last.a.y - t.ay;
+            const double dbx = work_.last.b.x - t.bx, dby = work_.last.b.y - t.by;
+            work_.haveTruth = true;
+            work_.truthResidualAPx = std::sqrt(dax * dax + day * day);
+            work_.truthResidualBPx = std::sqrt(dbx * dbx + dby * dby);
+            work_.truthDiffLongPx  = t.diffLongPx;
+            work_.truthDiffTranPx  = t.diffTranPx;
         }
     }
+
+    publish();
 }
 
 void DimmProcessor::acquire(const Frame& f) {
     // Predicted separation from the wedge spec, when known. Used only to reject
     // a wrong pair, never to calibrate.
     double expectedSep = 0.0;
-    if (cfg_.optics.haveWedgeSpec && cfg_.calibration.valid()) {
+    if (localCfg_.optics.haveWedgeSpec && localCfg_.calibration.valid()) {
         const double devArcsec =
-            (cfg_.optics.wedgeIndex - 1.0) * cfg_.optics.wedgeApexArcmin * 60.0;
-        expectedSep = devArcsec / cfg_.calibration.arcsecPerPixel;
+            (localCfg_.optics.wedgeIndex - 1.0) * localCfg_.optics.wedgeApexArcmin * 60.0;
+        expectedSep = devArcsec / localCfg_.calibration.arcsecPerPixel;
     }
-    st_.expectedSepPx = expectedSep;
+    work_.expectedSepPx = expectedSep;
 
     const std::vector<Detection> dets =
-        detectSpots(f, cfg_.acquisition, cfg_.centroid, 8);
+        detectSpots(f, localCfg_.acquisition, localCfg_.centroid, 8);
 
     Detection a{}, b{};
     std::string why;
     if (!selectPair(dets, cfg_, expectedSep, a, b, why)) {
-        st_.message = why + " (" + std::to_string(dets.size()) + " detected)";
+        work_.message = why + " (" + std::to_string(dets.size()) + " detected)";
         return;
     }
 
@@ -140,24 +174,24 @@ void DimmProcessor::acquire(const Frame& f) {
     const double dx = b.x - a.x, dy = b.y - a.y;
     const double sepAngle = std::atan2(dy, dx);
     double axisAngle = sepAngle;
-    switch (cfg_.optics.wedgeOrientation) {
+    switch (localCfg_.optics.wedgeOrientation) {
         case WedgeOrientation::AcrossBaseline:
             axisAngle = sepAngle + 1.5707963267948966;   // +90 deg
             break;
         case WedgeOrientation::ExplicitAngle:
             axisAngle = sepAngle +
-                        cfg_.optics.wedgeAngleFromSeparationDeg * kDeg2Rad;
+                        localCfg_.optics.wedgeAngleFromSeparationDeg * kDeg2Rad;
             break;
         default: break;   // AlongBaseline
     }
     axisUx_ = std::cos(axisAngle);
     axisUy_ = std::sin(axisAngle);
 
-    st_.axisAngleDeg = axisAngle * kRad2Deg;
-    st_.meanSepPx    = std::sqrt(dx * dx + dy * dy);
-    sepEma_          = st_.meanSepPx;
-    st_.state        = DimmState::Measuring;
-    st_.message      = "locked";
+    work_.axisAngleDeg = axisAngle * kRad2Deg;
+    work_.meanSepPx    = std::sqrt(dx * dx + dy * dy);
+    sepEma_          = work_.meanSepPx;
+    work_.state        = DimmState::Measuring;
+    work_.message      = "locked";
     lostFrames_      = 0;
 }
 
@@ -167,17 +201,17 @@ void DimmProcessor::track(const Frame& f) {
     s.timestampNs = f.meta.hostArrivalNs;
     s.exposureUs  = f.meta.exposureUs;
 
-    s.a = measureSpot(f, lastAx_, lastAy_, cfg_.centroid);
-    s.b = measureSpot(f, lastBx_, lastBy_, cfg_.centroid);
+    s.a = measureSpot(f, lastAx_, lastAy_, localCfg_.centroid);
+    s.b = measureSpot(f, lastBx_, lastBy_, localCfg_.centroid);
 
     if (!s.a.valid || !s.b.valid) {
         s.rejectReason = "spot lost";
         if (++lostFrames_ > 30) {
-            st_.state   = DimmState::Acquiring;
-            st_.message = "lost both spots -- reacquiring";
+            work_.state   = DimmState::Acquiring;
+            work_.message = "lost both spots -- reacquiring";
         }
-        ++st_.nRejected;
-        st_.last = s; st_.haveLast = true;
+        ++work_.nRejected;
+        work_.last = s; work_.haveLast = true;
         return;
     }
     lostFrames_ = 0;
@@ -193,7 +227,7 @@ void DimmProcessor::track(const Frame& f) {
     const double projT = -dx * axisUy_ + dy * axisUx_;
 
     // --- rejection gates -----------------------------------------------------
-    const RejectionConfig& rej = cfg_.rejection;
+    const RejectionConfig& rej = localCfg_.rejection;
     if (rej.rejectSaturated && (s.a.saturated || s.b.saturated)) {
         // A clipped core flattens the peak and pulls the centroid toward the
         // middle of the flat region, SUPPRESSING apparent motion -- it makes the
@@ -201,8 +235,8 @@ void DimmProcessor::track(const Frame& f) {
         //
         // With interleaving on, gain must be set for the 2t leg: it carries
         // twice the signal, so a level that is comfortable at t clips at 2t.
-        const bool longLeg = st_.interleaving &&
-                             s.exposureUs > cfg_.burst.baseExposureUs * 3 / 2;
+        const bool longLeg = work_.interleaving &&
+                             s.exposureUs > localCfg_.burst.baseExposureUs * 3 / 2;
         char buf[128];
         std::snprintf(buf, sizeof(buf), "saturated (spot %s)%s",
                       s.a.saturated ? (s.b.saturated ? "A+B" : "A") : "B",
@@ -227,10 +261,10 @@ void DimmProcessor::track(const Frame& f) {
     }
 
     if (!s.rejectReason.empty()) {
-        ++st_.nRejected;
-        st_.satRejectFraction = (st_.nAccepted + st_.nRejected) > 0
-            ? double(satRejects_) / double(st_.nAccepted + st_.nRejected) : 0.0;
-        st_.last = s; st_.haveLast = true;
+        ++work_.nRejected;
+        work_.satRejectFraction = (work_.nAccepted + work_.nRejected) > 0
+            ? double(satRejects_) / double(work_.nAccepted + work_.nRejected) : 0.0;
+        work_.last = s; work_.haveLast = true;
         return;
     }
 
@@ -239,7 +273,7 @@ void DimmProcessor::track(const Frame& f) {
     // Computed here so both the t accumulator and the synthesized pair can use
     // it without recomputing.
     lastNoiseVar_ = 0.0;
-    if (cfg_.burst.subtractNoiseBias) {
+    if (localCfg_.burst.subtractNoiseBias) {
         const int nPix = std::max(1, s.a.pixelsUsed);
         lastNoiseVar_ =
             centroidNoiseVariancePx2(s.a.fwhmPx, s.a.flux, s.a.backgroundSigma, nPix) +
@@ -261,12 +295,12 @@ void DimmProcessor::track(const Frame& f) {
                                                   : dt;
     }
     lastArrivalNs_ = s.timestampNs;
-    st_.dutyCycle = intervalEmaNs_ > 0.0
+    work_.dutyCycle = intervalEmaNs_ > 0.0
         ? std::min(1.0, double(s.exposureUs) * 1000.0 / intervalEmaNs_) : 0.0;
 
     int slot = 0;
-    if (st_.interleaving && !st_.synthesizing) {
-        const int64_t t  = cfg_.burst.baseExposureUs;
+    if (work_.interleaving && !work_.synthesizing) {
+        const int64_t t  = localCfg_.burst.baseExposureUs;
         const int64_t d0 = std::llabs(s.exposureUs - t);
         const int64_t d1 = std::llabs(s.exposureUs - 2 * t);
         slot = (d1 < d0) ? 1 : 0;
@@ -276,15 +310,15 @@ void DimmProcessor::track(const Frame& f) {
             --settleCount_;
             s.accepted = false;
             s.rejectReason = "exposure settling";
-            ++st_.nRejected;
-            st_.last = s; st_.haveLast = true;
+            ++work_.nRejected;
+            work_.last = s; work_.haveLast = true;
             return;
         }
         if (slot != activeSlot_) {
             s.accepted = false;
             s.rejectReason = "exposure mismatch";
-            ++st_.nRejected;
-            st_.last = s; st_.haveLast = true;
+            ++work_.nRejected;
+            work_.last = s; work_.haveLast = true;
             return;
         }
 
@@ -293,24 +327,33 @@ void DimmProcessor::track(const Frame& f) {
         // fires systematically on one leg -- saturation at 2t is the obvious
         // case -- the counter stops, the alternation never switches back, and
         // the instrument sits at the bad setting forever.
-        st_.currentExposureUs = s.exposureUs;
-        if (exposureSetter_ &&
-            ++blockCount_ >= std::max(2, cfg_.burst.interleaveBlockFrames)) {
+        work_.currentExposureUs = s.exposureUs;
+        if (localSetter_ &&
+            ++blockCount_ >= std::max(2, localCfg_.burst.interleaveBlockFrames)) {
             blockCount_ = 0;
             activeSlot_ = 1 - activeSlot_;
-            const int64_t t = cfg_.burst.baseExposureUs;
+            const int64_t t = localCfg_.burst.baseExposureUs;
             requestedUs_ = activeSlot_ == 0 ? t : 2 * t;
-            exposureSetter_(requestedUs_);
-            settleCount_ = std::max(1, cfg_.burst.interleaveSettleFrames);
+            localSetter_(requestedUs_);
+            settleCount_ = std::max(1, localCfg_.burst.interleaveSettleFrames);
         }
     } else {
-        st_.currentExposureUs = s.exposureUs;
+        work_.currentExposureUs = s.exposureUs;
     }
 
 
     acc_[slot].add(projL, projT);
 
-    if (st_.synthesizing) {
+    // Lag-1 product, for the decorrelation estimate below.
+    if (havePrevProj_ && s.sequence == prevSeq_ + 1) {
+        lagSumProd_ += projL * prevProjL_;
+        ++lagN_;
+    }
+    prevProjL_    = projL;
+    prevSeq_      = s.sequence;
+    havePrevProj_ = true;
+
+    if (work_.synthesizing) {
         const double nv = lastNoiseVar_;
         if (pending_.have && s.sequence == pending_.sequence + 1) {
             // Flux-weighted mean per spot, then difference. The two spots carry
@@ -370,36 +413,57 @@ void DimmProcessor::track(const Frame& f) {
     // Centroid noise adds variance and biases seeing HIGH -- the opposite
     // direction to exposure bias. Accumulated per frame from the measured SNR
     // so it can be subtracted before inversion.
-    if (cfg_.burst.subtractNoiseBias) {
+    if (localCfg_.burst.subtractNoiseBias) {
         sumNoiseVarPx2_ += lastNoiseVar_;
         acc_[slot].noiseSum += lastNoiseVar_;
     }
 
-    ++st_.nAccepted;
-    const double nAcc = std::max(1, st_.nAccepted);
-    st_.meanSepPx = sumSep_ / nAcc;
-    st_.meanFluxA = sumFa_ / nAcc;
-    st_.meanFluxB = sumFb_ / nAcc;
-    st_.fluxRatio = st_.meanFluxA > 0.0 ? st_.meanFluxB / st_.meanFluxA : 0.0;
+    ++work_.nAccepted;
+    const double nAcc = std::max(1, work_.nAccepted);
+    work_.meanSepPx = sumSep_ / nAcc;
+    work_.meanFluxA = sumFa_ / nAcc;
+    work_.meanFluxB = sumFb_ / nAcc;
+    work_.fluxRatio = work_.meanFluxA > 0.0 ? work_.meanFluxB / work_.meanFluxA : 0.0;
 
     if (n_ > 1) {
-        st_.varLongPx2 = m2L_ / (n_ - 1);
-        st_.varTranPx2 = m2T_ / (n_ - 1);
+        work_.varLongPx2 = m2L_ / (n_ - 1);
+        work_.varTranPx2 = m2T_ / (n_ - 1);
     }
 
-    st_.last = s;
-    st_.haveLast = true;
+    // Decorrelation time from the lag-1 autocorrelation, assuming exponential
+    // decay. Model-dependent: real atmospheric tilt does not decay exponentially
+    // (see docs/synthetic-model.md), so treat this as indicative. It is still
+    // directly useful -- it says whether consecutive frames are independent,
+    // which the variance estimate assumes.
+    work_.frameIntervalMs = intervalEmaNs_ / 1e6;
+    if (lagN_ > 30 && work_.varLongPx2 > 0.0 && work_.frameIntervalMs > 0.0) {
+        const double autocov1 = lagSumProd_ / lagN_ - meanL_ * meanL_;
+        const double rho1 = autocov1 / work_.varLongPx2;
+        work_.motionRho1 = rho1;
+        if (rho1 > 0.02 && rho1 < 0.999) {
+            work_.motionTauMs = -work_.frameIntervalMs / std::log(rho1);
+            work_.haveMotionTau = true;
+        } else {
+            // rho1 at the floor means frames are already independent at this
+            // cadence, so the timescale is shorter than one frame and cannot be
+            // resolved. Saying nothing beats extrapolating.
+            work_.haveMotionTau = false;
+        }
+    }
 
-    st_.nAtT  = acc_[0].n;
-    st_.nAt2T = acc_[1].n;
+    work_.last = s;
+    work_.haveLast = true;
 
-    if (st_.nAccepted >= cfg_.burst.framesPerBurst) finishBurst();
+    work_.nAtT  = acc_[0].n;
+    work_.nAt2T = acc_[1].n;
+
+    if (work_.nAccepted >= localCfg_.burst.framesPerBurst) finishBurst();
 }
 
 void DimmProcessor::finishBurst() {
     auto invert = [&](const VarianceAccumulator& a, int rejected) {
         double vL = a.varL(), vT = a.varT();
-        if (cfg_.burst.subtractNoiseBias) {
+        if (localCfg_.burst.subtractNoiseBias) {
             const double noise = a.meanNoise();
             vL -= noise;
             vT -= noise;
@@ -407,14 +471,14 @@ void DimmProcessor::finishBurst() {
         return computeSeeing(vL, vT, a.n, rejected, cfg_);
     };
 
-    st_.fwhmAtT = st_.fwhmAt2T = 0.0;
-    st_.exposureCorrection = 1.0;
+    work_.fwhmAtT = work_.fwhmAt2T = 0.0;
+    work_.exposureCorrection = 1.0;
 
-    if (st_.interleaving && acc_[0].n > 2 && acc_[1].n > 2) {
-        SeeingResult rT  = invert(acc_[0], st_.nRejected);
+    if (work_.interleaving && acc_[0].n > 2 && acc_[1].n > 2) {
+        SeeingResult rT  = invert(acc_[0], work_.nRejected);
         SeeingResult r2T = invert(acc_[1], 0);
-        st_.fwhmAtT  = rT.fwhmArcsec;
-        st_.fwhmAt2T = r2T.fwhmArcsec;
+        work_.fwhmAtT  = rT.fwhmArcsec;
+        work_.fwhmAt2T = r2T.fwhmArcsec;
 
         if (rT.valid && r2T.valid) {
             // A finite exposure averages correlated image motion and biases
@@ -423,25 +487,27 @@ void DimmProcessor::finishBurst() {
             const double eps0 = extrapolateToZeroExposure(rT.fwhmArcsec,
                                                           r2T.fwhmArcsec);
             applyCorrectedSeeing(rT, eps0, cfg_);
-            st_.exposureCorrection = rT.exposureCorrectionFactor;
-            st_.result = rT;
+            work_.exposureCorrection = rT.exposureCorrectionFactor;
+            work_.result = rT;
         } else {
-            st_.result = rT.valid ? rT : r2T;
+            work_.result = rT.valid ? rT : r2T;
         }
     } else {
         // Uncorrected. Honest, but reads low by roughly (retention)^0.6 --
         // about 17% at exposure equal to the coherence time.
-        st_.result = invert(acc_[0], st_.nRejected);
+        work_.result = invert(acc_[0], work_.nRejected);
     }
-    st_.haveResult = true;
+    work_.result.burstSequence = ++burstCounter_;
+    work_.burstsCompleted = burstCounter_;
+    work_.haveResult = true;
 
-    const double frac = (st_.nAccepted + st_.nRejected) > 0
-        ? double(st_.nRejected) / double(st_.nAccepted + st_.nRejected) : 0.0;
-    if (frac > cfg_.rejection.maxRejectedFraction) {
+    const double frac = (work_.nAccepted + work_.nRejected) > 0
+        ? double(work_.nRejected) / double(work_.nAccepted + work_.nRejected) : 0.0;
+    if (frac > localCfg_.rejection.maxRejectedFraction) {
         // Publishing a number computed from whatever survived a heavy rejection
         // pass is worse than publishing nothing.
-        st_.result.valid = false;
-        st_.result.reason = "rejected fraction too high (" +
+        work_.result.valid = false;
+        work_.result.reason = "rejected fraction too high (" +
                             std::to_string(int(frac * 100)) + "%)";
     }
 
@@ -451,10 +517,11 @@ void DimmProcessor::finishBurst() {
     // sepEma_ deliberately survives: the pair has not moved.
     n_ = 0; meanL_ = m2L_ = meanT_ = m2T_ = 0.0;
     sumSep_ = sumFa_ = sumFb_ = sumNoiseVarPx2_ = 0.0;
+    lagSumProd_ = 0.0; lagN_ = 0; havePrevProj_ = false;
     acc_[0].reset(); acc_[1].reset();
-    st_.nAccepted = st_.nRejected = 0;
+    work_.nAccepted = work_.nRejected = 0;
 }
 
-void DimmProcessor::accumulate(DimmSample&) {}
+
 
 } // namespace mei

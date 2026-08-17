@@ -196,6 +196,32 @@ void DimmPanel(bool* open, DimmProcessor& proc, const DimmConfig& cfg,
                               "equals the coherence time, and much more beyond.");
     }
 
+    // --- temporal ------------------------------------------------------------
+    ImGui::SeparatorText("Temporal");
+    if (st.haveMotionTau) {
+        ImGui::Text("Motion decorrelation: %.2f ms  (rho1 = %.3f at %.2f ms)",
+                    st.motionTauMs, st.motionRho1, st.frameIntervalMs);
+        const double framesPerTau = st.frameIntervalMs > 0.0
+            ? st.motionTauMs / st.frameIntervalMs : 0.0;
+        if (framesPerTau > 1.0) {
+            ImGui::TextColored(kWarn,
+                "Consecutive frames are correlated (%.1f frames per decorrelation "
+                "time) -- the variance estimate assumes independence.",
+                framesPerTau);
+        }
+    } else if (st.frameIntervalMs > 0.0) {
+        ImGui::TextColored(kDim, "Motion decorrelation below one frame (%.2f ms)",
+                           st.frameIntervalMs);
+    } else {
+        ImGui::TextColored(kDim, "Motion decorrelation: collecting...");
+    }
+    ImGui::TextWrapped(
+        "Measured from the lag-1 autocorrelation of the differential motion. "
+        "This is not tau_0: it describes image motion, which is dominated by "
+        "large spatial scales and decorrelates more slowly than phase does. "
+        "Deriving tau_0 from a DIMM needs the temporal structure function, "
+        "which is not implemented.");
+
     // --- result --------------------------------------------------------------
     if (st.haveResult) {
         ImGui::SeparatorText("Seeing");
@@ -207,8 +233,12 @@ void DimmPanel(bool* open, DimmProcessor& proc, const DimmConfig& cfg,
             ImGui::SameLine();
             ImGui::TextColored(kGood, "%.3f +/- %.3f arcsec",
                                r.fwhmZenithArcsec, r.sigmaArcsec);
-            ImGui::Text("line of sight: %.3f\"   airmass %.2f",
+            ImGui::Text("DIMM line of sight: %.3f\"   airmass %.2f",
                         r.fwhmArcsec, r.airmassUsed);
+            if (r.fwhmAtScienceArcsec > 0.0) {
+                ImGui::Text("At science target: %.3f\"   airmass %.2f",
+                            r.fwhmAtScienceArcsec, r.scienceAirmass);
+            }
             ImGui::Text("r0 = %.1f mm (zenith)", r.r0Zenith * 1000.0);
             ImGui::Text("per axis: long %.3f\"  tran %.3f\"",
                         r.fwhmLongArcsec, r.fwhmTranArcsec);

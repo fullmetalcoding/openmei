@@ -8,6 +8,7 @@
 
 #include "dimm/config.h"
 
+#include <cstdint>
 #include <string>
 
 namespace mei {
@@ -48,6 +49,8 @@ inline double r0FromFwhm(double fwhmRad, double wavelengthM) {
 // r0 ∝ (cos z)^(3/5). Line-of-sight -> zenith-equivalent.
 double r0ToZenith(double r0LineOfSight, double altitudeDeg);
 double seeingToZenith(double fwhmLineOfSight, double altitudeDeg);
+// Inverse: project a zenith-normalised value back onto a given line of sight.
+double seeingFromZenith(double fwhmZenith, double altitudeDeg);
 inline double airmass(double altitudeDeg);
 
 // Tokovinin's modified exponential extrapolation from an interleaved pair.
@@ -77,6 +80,13 @@ struct SeeingResult {
     bool   valid = false;
     std::string reason;
 
+    // Monotonic per completed burst. Downstream consumers -- the Alpaca
+    // endpoint, the logger -- need to know a result is NEW, and no combination
+    // of the measured fields tells them that: a steady atmosphere legitimately
+    // produces near-identical numbers burst after burst, and frame counts are
+    // identical by construction.
+    uint64_t burstSequence = 0;
+
     double varLongRad2 = 0.0;      // after rejection, noise subtraction
     double varTranRad2 = 0.0;
     double varLongPx2  = 0.0;      // as measured, for the record
@@ -91,6 +101,11 @@ struct SeeingResult {
     double fwhmTranArcsec = 0.0;
     double fwhmArcsec     = 0.0;   // line of sight
     double fwhmZenithArcsec = 0.0; // the published number
+
+    // Zenith value projected onto the science instrument's line of sight. Zero
+    // when no science target is configured.
+    double fwhmAtScienceArcsec = 0.0;
+    double scienceAirmass = 0.0;
 
     double sigmaArcsec = 0.0;      // 1-sigma uncertainty
     int    framesUsed  = 0;

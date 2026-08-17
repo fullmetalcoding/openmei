@@ -164,6 +164,8 @@ mei_detect_vendor("Player One" "playerone/PlayerOneCamera.h" HAVE_PLAYERONE HAVE
 
 set(OPENMEI_SOURCES
     src/main.cpp
+    src/app/settings_store.cpp
+    src/app/settings_store.h
 
     # --- camera abstraction -------------------------------------------------
     src/camera/camera.h
@@ -225,12 +227,12 @@ if(HAVE_PLAYERONE)
 endif()
 
 if(OPENMEI_BUILD_ALPACA)
-#    list(APPEND OPENMEI_SOURCES
-#        src/net/alpaca_server.cpp    # ObservingConditions: StarFWHM + Actions
-#        src/net/alpaca_server.h
+    list(APPEND OPENMEI_SOURCES
+        src/net/alpaca_server.cpp    # ObservingConditions: StarFWHM + Actions
+        src/net/alpaca_server.h
 #        src/net/discovery.cpp        # UDP 32227 responder
 #        src/net/telemetry_socket.cpp # newline-delimited JSON push feed
-#    )
+    )
 endif()
 
 add_executable(openmei ${OPENMEI_SOURCES})

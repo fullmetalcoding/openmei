@@ -8,6 +8,18 @@ namespace mei {
 namespace {
 constexpr double kFwhmPerSigma = 2.3548200450309493;
 
+// Ceiling on candidate peaks per frame. Hitting it means the detection
+// threshold is far too low for the current background -- which happens after a
+// bit-depth or ROI change shifts the statistics. Bounded work is better than
+// correct-but-unusable.
+constexpr size_t kMaxPeaks = 2048;
+} // namespace
+
+// Set by detectSpots when the candidate ceiling was hit.
+thread_local bool detectionOverflowed = false;
+
+namespace {
+
 double medianOf(std::vector<double>& v) {
     if (v.empty()) return 0.0;
     const size_t mid = v.size() / 2;
@@ -31,7 +43,8 @@ void estimateBackground(const Frame& f, double cx, double cy,
     const int r1 = std::max(r0 + 1, cfg.annulusOuterPx);
     const int ix = int(std::lround(cx)), iy = int(std::lround(cy));
 
-    std::vector<double> samples;
+    static thread_local std::vector<double> samples;
+    samples.clear();
     samples.reserve(size_t(4 * r1 * r1));
     for (int y = iy - r1; y <= iy + r1; ++y) {
         for (int x = ix - r1; x <= ix + r1; ++x) {
@@ -48,7 +61,8 @@ void estimateBackground(const Frame& f, double cx, double cy,
 
     // MAD, scaled to a Gaussian-equivalent sigma. Robust to a field star or a
     // hot pixel landing in the annulus, which a plain stddev is not.
-    std::vector<double> dev(samples.size());
+    static thread_local std::vector<double> dev;
+    dev.assign(samples.size(), 0.0);
     for (size_t i = 0; i < samples.size(); ++i) dev[i] = std::fabs(samples[i] - level);
     sigma = std::max(1e-3, 1.4826 * medianOf(dev));
 }
@@ -150,55 +164,88 @@ std::vector<Detection> detectSpots(const Frame& f, const AcquisitionConfig& acq,
     const int W = f.meta.width, H = f.meta.height;
     if (W < 8 || H < 8) return out;
 
-    // Global background from a coarse sample of the frame -- cheap, and good
-    // enough to find candidates that a proper windowed measurement then refines.
-    std::vector<double> samples;
-    samples.reserve(4096);
+    // Coarse global background -- enough to find candidates that a proper
+    // windowed measurement then refines.
+    static thread_local std::vector<double> samples, dev;
+    samples.clear();
     const int step = std::max(1, (W * H) / 4096);
     for (int i = 0; i < W * H; i += step)
         samples.push_back(pixelAt(f, i % W, i / W));
     const double bg = medianOf(samples);
-    std::vector<double> dev(samples.size());
+    dev.assign(samples.size(), 0.0);
     for (size_t i = 0; i < samples.size(); ++i) dev[i] = std::fabs(samples[i] - bg);
     const double sigma = std::max(1e-3, 1.4826 * medianOf(dev));
 
     const double thresh = bg + acq.detectThresholdSigma * sigma;
     const int guard = 3;
 
-    for (int y = guard; y < H - guard; ++y) {
+    // Phase 1: locate local maxima only. Cheap per pixel, and crucially it does
+    // NOT run a full centroid measurement yet -- doing that on every candidate
+    // is what turns a badly set threshold into thousands of annulus fits and a
+    // frozen interface.
+    struct Peak { int x, y; double v; };
+    static thread_local std::vector<Peak> peaks;
+    peaks.clear();
+
+    bool overflowed = false;
+    for (int y = guard; y < H - guard && !overflowed; ++y) {
         for (int x = guard; x < W - guard; ++x) {
             const double v = pixelAt(f, x, y);
             if (v < thresh) continue;
-            // Local maximum in a 5x5 neighbourhood.
             bool isMax = true;
             for (int dy = -2; dy <= 2 && isMax; ++dy)
                 for (int dx = -2; dx <= 2; ++dx)
                     if ((dx || dy) && pixelAt(f, x + dx, y + dy) > v) { isMax = false; break; }
             if (!isMax) continue;
 
-            Detection d;
-            d.x = x; d.y = y; d.peak = v - bg;
-            const SpotMeasurement m = measureSpot(f, x, y, cen);
-            if (!m.valid) continue;
-            d.x = m.x; d.y = m.y; d.flux = m.flux; d.peak = m.peak;
-
-            // Merge candidates that resolved to the same spot.
-            bool dup = false;
-            for (auto& e : out) {
-                const double dx = e.x - d.x, dy = e.y - d.y;
-                if (dx * dx + dy * dy < 16.0) {
-                    if (d.flux > e.flux) e = d;
-                    dup = true;
-                    break;
-                }
+            peaks.push_back({ x, y, v });
+            if (peaks.size() >= kMaxPeaks) {   // hard ceiling, see below
+                overflowed = true;
+                break;
             }
-            if (!dup) out.push_back(d);
         }
+    }
+    if (peaks.empty()) return out;
+    if (overflowed) {
+        // Leave a marker the caller can report. Two spots is the expected
+        // count; thousands means the threshold no longer suits the background,
+        // which is what a bit-depth or ROI change does to it.
+        detectionOverflowed = true;
+    } else {
+        detectionOverflowed = false;
+    }
+
+    // Phase 2: keep only the brightest handful. A DIMM has two spots; anything
+    // beyond a small multiple of that is noise or a mis-set threshold, and
+    // measuring it costs time we do not have at frame rate.
+    const size_t keep = std::min(peaks.size(), size_t(std::max(2, maxCount) * 3));
+    std::partial_sort(peaks.begin(), peaks.begin() + keep, peaks.end(),
+                      [](const Peak& a, const Peak& b) { return a.v > b.v; });
+    peaks.resize(keep);
+
+    // Phase 3: full measurement, on a bounded set.
+    for (const Peak& p : peaks) {
+        const SpotMeasurement m = measureSpot(f, p.x, p.y, cen);
+        if (!m.valid) continue;
+
+        Detection d;
+        d.x = m.x; d.y = m.y; d.flux = m.flux; d.peak = m.peak;
+
+        bool dup = false;
+        for (auto& e : out) {
+            const double dx = e.x - d.x, dy = e.y - d.y;
+            if (dx * dx + dy * dy < 16.0) {
+                if (d.flux > e.flux) e = d;
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) out.push_back(d);
+        if (int(out.size()) >= maxCount) break;
     }
 
     std::sort(out.begin(), out.end(),
               [](const Detection& a, const Detection& b) { return a.flux > b.flux; });
-    if (int(out.size()) > maxCount) out.resize(size_t(maxCount));
     return out;
 }
 

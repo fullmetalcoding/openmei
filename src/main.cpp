@@ -19,6 +19,10 @@
 #include "dimm/processor.h"
 #include "dimm/seeing.h"
 #include "ui/camera_dialog.h"
+#include "app/settings_store.h"
+#ifdef OPENMEI_ALPACA
+#include "net/alpaca_server.h"
+#endif
 #include "ui/dimm_panel.h"
 #include "ui/settings_dialog.h"
 #include "ui/viewport.h"
@@ -68,10 +72,22 @@ struct MeiApp {
     bool showSynthPanel = false;
 
     // Measurement configuration and its editor.
-    DimmConfig         dimm;
+    AppSettings        prefs;
+    DimmConfig&        dimm = prefs.dimm;   // alias: everything already uses this
     ui::SettingsDialog settings;
+    bool               prefsDirty = false;
+    uint64_t           lastPrefsSaveMs = 0;
     DimmProcessor      processor;
     bool               showDimmPanel = true;
+
+#ifdef OPENMEI_ALPACA
+    AlpacaServer  alpaca;
+    AlpacaConfig& alpacaCfg = prefs.alpaca;
+    bool         showAlpacaPanel = false;
+    // Only republish when a genuinely new burst completes, so clients see a
+    // stable value between measurements rather than a field that churns.
+    uint64_t     lastPublishedBurst = 0;
+#endif
 
     // Spot overlay, PHD2-style.
     bool overlayShow      = true;
@@ -215,6 +231,7 @@ static void startStream(MeiApp& app) {
                   app.want.monoBin ? " (mono bin)" : "",
                   app.want.exposureUs / 1000.0, app.want.gain);
     app.setStatus(Severity::Info, buf);
+    app.prefsDirty = true;
 }
 
 static void SyntheticPanel(MeiApp& app) {
@@ -281,6 +298,24 @@ static void SyntheticPanel(MeiApp& app) {
         p.bandwidthNm = band;
     ImGui::SetItemTooltip("Sets the chromatic streak on the deviated spot. "
                           "Narrowing the band is what makes the wedge usable.");
+
+    // The streak is deviation/Abbe, so it scales with separation -- which is
+    // why a fixed 30' wedge at a long focal length is unusable while the same
+    // glass in a Risley pair set to a small net deviation is fine.
+    {
+        const double bandFrac = std::clamp(p.bandwidthNm / 300.0, 0.0, 1.0);
+        const double streak   = (p.separationPx / std::max(1.0, p.abbeNumber)) * bandFrac;
+        const double sig      = p.spotFwhmPx / 2.35482;
+        const double sMaj     = std::sqrt(sig * sig + streak * streak / 12.0);
+        const double ellip    = 1.0 - sig / sMaj;
+        ImGui::TextDisabled("Streak %.2f px -> FWHM %.2f x %.2f px, ellipticity %.3f",
+                            streak, sMaj * 2.35482, p.spotFwhmPx, ellip);
+        if (ellip > 0.15) {
+            ImGui::TextColored(ImVec4(0.90f, 0.70f, 0.25f, 1.0f),
+                               "Spot B is badly smeared -- narrow the passband "
+                               "or reduce the deviation.");
+        }
+    }
 
     ImGui::SeparatorText("Detector");
     float fw = float(p.fullWellE);
@@ -390,6 +425,10 @@ static void MenuBar(MeiApp& app) {
 
     if (ImGui::BeginMenu("Measure")) {
         ImGui::MenuItem("DIMM panel", nullptr, &app.showDimmPanel);
+#ifdef OPENMEI_ALPACA
+        ImGui::Separator();
+        ImGui::MenuItem("Alpaca server...", nullptr, &app.showAlpacaPanel);
+#endif
         ImGui::EndMenu();
     }
 
@@ -505,6 +544,178 @@ static void StatusBar(MeiApp& app) {
     ImGui::End();
 }
 
+// Always-visible seeing readout. The point of a monitoring instrument is that
+// the number is in front of you without opening anything, so this sits in the
+// main window rather than only in the measurement panel.
+static void SeeingReadout(MeiApp& app) {
+    const DimmStatus st = app.processor.status();
+
+    const ImU32 dim  = IM_COL32(150, 150, 155, 255);
+    const ImU32 good = IM_COL32(120, 215, 130, 255);
+    const ImU32 warn = IM_COL32(230, 180,  60, 255);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float  h  = ImGui::GetFrameHeight() * 1.6f;
+    const float  w  = ImGui::GetContentRegionAvail().x;
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h),
+                      IM_COL32(28, 28, 34, 255), 4.0f);
+
+    ImGui::Dummy(ImVec2(w, h));
+    const float pad = 10.0f;
+    float x = p0.x + pad;
+    const float yTop = p0.y + 4.0f;
+    const float yBot = p0.y + h - ImGui::GetTextLineHeight() - 4.0f;
+
+    auto field = [&](const char* label, const std::string& value, ImU32 col,
+                     float width) {
+        dl->AddText(ImVec2(x, yTop), dim, label);
+        dl->AddText(ImVec2(x, yBot), col, value.c_str());
+        x += width;
+    };
+
+    char buf[96];
+    const bool have = st.haveResult && st.result.valid;
+
+    if (have) {
+        // Zenith at 500 nm is the DIMM reporting convention -- it is the only
+        // form comparable across nights, sites and instruments, because
+        // r0 goes as (cos z)^(3/5) and a raw value describes where you pointed
+        // rather than the atmosphere.
+        std::snprintf(buf, sizeof(buf), "%.2f\" +/- %.2f",
+                      st.result.fwhmZenithArcsec, st.result.sigmaArcsec);
+        field("SEEING (zenith, 500nm)", buf, good, 200.0f);
+
+        // What the instrument actually saw, along its own line of sight.
+        std::snprintf(buf, sizeof(buf), "%.2f\" @ X%.2f",
+                      st.result.fwhmArcsec, st.result.airmassUsed);
+        field("DIMM LOS", buf, dim, 130.0f);
+
+        // The DIMM points at its own star, so its line of sight is not the
+        // science instrument's. This projects the zenith value onto the science
+        // target's altitude, which is the number a paired dataset wants.
+        if (st.result.fwhmAtScienceArcsec > 0.0) {
+            std::snprintf(buf, sizeof(buf), "%.2f\" @ X%.2f",
+                          st.result.fwhmAtScienceArcsec, st.result.scienceAirmass);
+            field("AT TARGET", buf, good, 130.0f);
+        }
+
+        std::snprintf(buf, sizeof(buf), "%.1f cm", st.result.r0Zenith * 100.0);
+        field("r0", buf, good, 85.0f);
+    } else {
+        field("SEEING (zenith, 500nm)", "--", dim, 200.0f);
+        field("DIMM LOS", "--", dim, 130.0f);
+        field("r0", "--", dim, 85.0f);
+    }
+
+    // Deliberately not labelled tau_0. What a DIMM measures directly is how
+    // fast the IMAGE MOTION decorrelates; tau_0 concerns phase and is shorter,
+    // because tilt is dominated by large spatial scales that persist longer
+    // than the speckle pattern.
+    if (st.haveMotionTau) {
+        std::snprintf(buf, sizeof(buf), "%.1f ms", st.motionTauMs);
+        field("MOTION DECORR", buf, good, 120.0f);
+    } else if (st.frameIntervalMs > 0.0) {
+        std::snprintf(buf, sizeof(buf), "< %.1f ms", st.frameIntervalMs);
+        field("MOTION DECORR", buf, dim, 120.0f);
+    } else {
+        field("MOTION DECORR", "--", dim, 120.0f);
+    }
+
+    if (have && st.interleaving && st.exposureCorrection > 1.0) {
+        std::snprintf(buf, sizeof(buf), "x%.2f", st.exposureCorrection);
+        field("EXP CORR", buf, st.exposureCorrection > 1.3 ? warn : dim, 80.0f);
+    }
+
+    std::snprintf(buf, sizeof(buf), "%d", st.nAccepted);
+    field("FRAMES", buf, dim, 70.0f);
+
+    field("STATE", toString(st.state),
+          st.state == DimmState::Measuring ? good : dim, 90.0f);
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "SEEING is zenith-corrected at 500 nm -- the DIMM convention, and\n"
+            "the only form comparable across nights, sites and instruments.\n"
+            "DIMM LOS is the raw measurement along the DIMM's own pointing.\n"
+            "AT TARGET projects the zenith value onto the science instrument's\n"
+            "altitude; the DIMM observes a different star, so its own line of\n"
+            "sight is not the science target's.\n\n"
+            "MOTION DECORR is the lag-1 decorrelation time of the differential\n"
+            "image motion. It is NOT the atmospheric coherence time tau_0:\n"
+            "tilt persists longer than phase. Use it to judge whether frames\n"
+            "are statistically independent at the current cadence.");
+    }
+}
+
+#ifdef OPENMEI_ALPACA
+static void AlpacaPanel(MeiApp& app) {
+    if (!app.showAlpacaPanel) return;
+    ImGui::SetNextWindowSize(ImVec2(430, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Alpaca server", &app.showAlpacaPanel)) { ImGui::End(); return; }
+
+    const AlpacaStats st = app.alpaca.stats();
+
+    ImGui::TextWrapped(
+        "Publishes seeing as ObservingConditions.StarFWHM. Clients that already "
+        "speak observing conditions -- N.I.N.A., SGP, ACP, Voyager -- can consume "
+        "it with no work on their side.");
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(st.running);
+    ImGui::SetNextItemWidth(110);
+    ImGui::InputInt("Port", &app.alpacaCfg.port);
+    ImGui::Checkbox("UDP discovery (port 32227)", &app.alpacaCfg.discovery);
+    ImGui::SetItemTooltip("Without this, clients must be given the address by "
+                          "hand, which is where most people give up.");
+    ImGui::EndDisabled();
+
+    if (!st.running) {
+        if (ImGui::Button("Start", ImVec2(100, 0))) {
+            std::string err;
+            if (app.alpaca.start(app.alpacaCfg, err))
+                app.setStatus(Severity::Info,
+                              "Alpaca server listening on port " +
+                              std::to_string(app.alpacaCfg.port) + ".");
+            else
+                app.setStatus(Severity::Error, "Alpaca start failed: " + err);
+        }
+    } else {
+        if (ImGui::Button("Stop", ImVec2(100, 0))) {
+            app.alpaca.stop();
+            app.setStatus(Severity::Info, "Alpaca server stopped.");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.50f, 1.0f),
+                           "listening on :%d", st.port);
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Bursts published: %llu", (unsigned long long)st.publishedBursts);
+    if (st.publishedBursts > 0) {
+        ImGui::SameLine();
+        ImGui::TextColored(st.lastPublishAgeS > 300.0
+                               ? ImVec4(0.90f, 0.70f, 0.25f, 1.0f)
+                               : ImVec4(0.60f, 0.60f, 0.65f, 1.0f),
+                           "(last %.0f s ago)", st.lastPublishAgeS);
+    }
+    ImGui::Text("Requests served: %llu", (unsigned long long)st.requests);
+    ImGui::Text("Discovery replies: %llu", (unsigned long long)st.discoveryReplies);
+    ImGui::Text("Client Connected: %s", st.clientConnected ? "yes" : "no");
+    if (!st.lastClient.empty()) ImGui::TextDisabled("last client: %s", st.lastClient.c_str());
+    if (!st.lastError.empty())
+        ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f), "%s", st.lastError.c_str());
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Unique ID (persist this with your configuration):");
+    ImGui::TextWrapped("%s", app.alpacaCfg.uniqueId.c_str());
+    ImGui::SetItemTooltip("Clients key their saved device selection on this. "
+                          "Regenerating it makes them lose the device.");
+
+    ImGui::End();
+}
+#endif
+
 // PHD2-style spot markers drawn over the live view. Deliberately drawn from
 // the processor's own measurements rather than re-detected here, so what you
 // see is exactly what is being measured -- if the box sits off the star, the
@@ -609,6 +820,9 @@ static void CentralArea(MeiApp& app) {
 
         const ICamera* cam = app.cameras.camera();
         const Caps&    c   = cam->caps();
+
+        SeeingReadout(app);
+        ImGui::Spacing();
 
         // --- toolbar ---------------------------------------------------------
         ImGui::Text("%s", app.cameras.connectedDesc().displayName().c_str());
@@ -948,6 +1162,24 @@ int main(int, char**) {
     ImGui_ImplOpenGL3_Init("#version 330");
 
     mei::MeiApp app;
+    {
+        std::string perr;
+        if (!mei::loadSettings(app.prefs, perr)) {
+            app.setStatus(mei::Severity::Warning,
+                          "Settings could not be loaded, using defaults: " + perr);
+        }
+        // Alpaca's UniqueID identifies a device INSTANCE. Generated once here
+        // and persisted: regenerating it per launch loses the client's saved
+        // selection, and a compile-time constant would make two installations
+        // on one network indistinguishable.
+        if (app.prefs.installationId.empty()) {
+            app.prefs.installationId = mei::AlpacaServer::generateUniqueId();
+            app.prefsDirty = true;
+        }
+        app.prefs.alpaca.uniqueId = app.prefs.installationId;
+        if (app.prefs.haveStream) app.want = app.prefs.stream;
+        SDL_Log("settings: %s", mei::settingsPath().c_str());
+    }
 
     // --- Main loop -----------------------------------------------------------
     while (app.running) {
@@ -977,7 +1209,34 @@ int main(int, char**) {
         mei::ui::StatusBar(app);
         mei::ui::CentralArea(app);
         mei::ui::SyntheticPanel(app);
-        app.settings.draw(app.dimm);
+#ifdef OPENMEI_ALPACA
+        mei::ui::AlpacaPanel(app);
+        {
+            // Republish on each completed burst. Keyed on the burst counter,
+            // not on the measured values: a steady atmosphere produces
+            // near-identical results burst after burst, and frame counts are
+            // the same every time by construction, so anything derived from the
+            // numbers themselves silently stops updating.
+            const mei::DimmStatus ds = app.processor.status();
+            if (ds.haveResult && ds.result.burstSequence != app.lastPublishedBurst) {
+                app.lastPublishedBurst = ds.result.burstSequence;
+                app.alpaca.publish(ds.result, app.dimm);
+            }
+        }
+#endif
+        {
+            const mei::DimmConfig before = app.dimm;
+            app.settings.draw(app.dimm);
+            // Cheap structural comparison is not available, so key on the one
+            // field that gates everything plus a coarse checksum of geometry.
+            if (before.calibration.arcsecPerPixel != app.dimm.calibration.arcsecPerPixel ||
+                before.calibration.method != app.dimm.calibration.method ||
+                before.optics.subApertureMm != app.dimm.optics.subApertureMm ||
+                before.optics.baselineMm != app.dimm.optics.baselineMm ||
+                before.burst.framesPerBurst != app.dimm.burst.framesPerBurst) {
+                app.prefsDirty = true;
+            }
+        }
         app.processor.setConfig(app.dimm);
         mei::ui::OverlayOptions ov;
         ov.show    = &app.overlayShow;
@@ -993,6 +1252,24 @@ int main(int, char**) {
             });
         if (app.showDemo) ImGui::ShowDemoWindow(&app.showDemo);
 
+        // Debounced save. Writing on every frame would hammer the disk; writing
+        // only at exit would lose everything on a crash, and a crash mid-session
+        // is exactly when a freshly measured plate scale is most valuable.
+        if (app.prefsDirty) {
+            const Uint64 nowMs = SDL_GetTicks();
+            if (nowMs - app.lastPrefsSaveMs > 2000) {
+                app.prefs.stream = app.want;
+                app.prefs.haveStream = app.want.width > 0;
+                if (app.cameras.connected())
+                    app.prefs.lastCameraKey = app.cameras.connectedDesc().uniqueKey();
+                std::string perr;
+                if (!mei::saveSettings(app.prefs, perr))
+                    app.setStatus(mei::Severity::Warning, "Could not save settings: " + perr);
+                app.prefsDirty = false;
+                app.lastPrefsSaveMs = nowMs;
+            }
+        }
+
         ImGui::Render();
 
         int w = 0, h = 0;
@@ -1007,6 +1284,15 @@ int main(int, char**) {
     // --- Teardown ------------------------------------------------------------
     // Order matters: join the grab thread and drop the GL texture while the
     // context is still current, before ImGui or SDL go away.
+    {
+        app.prefs.stream = app.want;
+        app.prefs.haveStream = app.want.width > 0;
+        std::string perr;
+        mei::saveSettings(app.prefs, perr);
+    }
+#ifdef OPENMEI_ALPACA
+    app.alpaca.stop();
+#endif
     app.processor.stopMeasuring();
     app.stream.stop();
     app.viewport.release();

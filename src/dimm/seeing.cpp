@@ -104,6 +104,14 @@ double seeingToZenith(double fwhmLineOfSight, double altitudeDeg) {
     return fwhmLineOfSight * std::pow(cosZ, 3.0 / 5.0);
 }
 
+double seeingFromZenith(double fwhmZenith, double altitudeDeg) {
+    if (fwhmZenith <= 0.0) return 0.0;
+    const double cosZ = std::sin(std::clamp(altitudeDeg, 1.0, 90.0) * kDeg2Rad);
+    // Looking through more air degrades seeing, so this always increases the
+    // number as altitude falls.
+    return fwhmZenith / std::pow(cosZ, 3.0 / 5.0);
+}
+
 double extrapolateToZeroExposure(double eps1, double eps2) {
     if (eps1 <= 0.0 || eps2 <= 0.0) return eps1;
     // c1 = (eps1/eps2)^(3/4); eps0 = 0.5 (c1 eps1 + c1^(7/3) eps2).
@@ -204,6 +212,12 @@ SeeingResult computeSeeing(double varLongPx2, double varTranPx2,
         out.r0Zenith         = out.r0;
     }
 
+    if (cfg.site.haveScienceTarget) {
+        out.scienceAirmass = airmass(cfg.site.scienceAltitudeDeg);
+        out.fwhmAtScienceArcsec =
+            seeingFromZenith(out.fwhmZenithArcsec, cfg.site.scienceAltitudeDeg);
+    }
+
     // Variance of a variance estimate from n samples is 2/(n-1) fractionally,
     // and seeing goes as variance^(3/5), so the fractional error scales by 3/5.
     const double fracVar = std::sqrt(2.0 / std::max(1, framesUsed - 1));
@@ -230,6 +244,11 @@ void applyCorrectedSeeing(SeeingResult& r, double corrected,
         r.fwhmZenithArcsec = r.fwhmArcsec;
         r.r0Zenith         = r.r0;
     }
+    if (cfg.site.haveScienceTarget) {
+        r.fwhmAtScienceArcsec =
+            seeingFromZenith(r.fwhmZenithArcsec, cfg.site.scienceAltitudeDeg);
+    }
+
     const double fracVar = std::sqrt(2.0 / std::max(1, r.framesUsed - 1));
     r.sigmaArcsec = r.fwhmZenithArcsec * 0.6 * fracVar;
 }

@@ -12,6 +12,7 @@
 #include "dimm/config.h"
 #include "dimm/seeing.h"
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -98,8 +99,20 @@ struct DimmStatus {
     double  dutyCycle = 0.0;
     bool    synthesizing = false;
 
+    // Lag-1 autocorrelation of the differential motion, and the decorrelation
+    // time implied by it. This is the timescale on which the IMAGE MOTION
+    // decorrelates -- not the atmospheric coherence time tau_0, which concerns
+    // phase and is shorter. Tilt is dominated by large spatial scales, so it
+    // persists longer than the speckle pattern does. Reported under its own
+    // name for that reason.
+    double  motionRho1 = 0.0;
+    double  motionTauMs = 0.0;
+    bool    haveMotionTau = false;
+    double  frameIntervalMs = 0.0;
+
     SeeingResult result;
     bool         haveResult = false;
+    uint64_t     burstsCompleted = 0;
 
     // Synthetic only: residual against the generator's own ground truth. This
     // is the number that says whether the centroider is correct, independent of
@@ -132,12 +145,41 @@ public:
 private:
     void acquire(const Frame&);
     void track(const Frame&);
-    void accumulate(DimmSample&);
     void finishBurst();
+    void publish();
+    // Take the config explicitly rather than reading localCfg_. These run
+    // inside onFrame() after the snapshot, so the member would be correct
+    // today -- but that is an ordering invariant the compiler cannot check,
+    // and a future caller outside onFrame() would silently read a
+    // default-constructed config instead of failing to build.
+    void applyBegin(const DimmConfig&);
+    void applyStop();
+    void applyResetBurst();
 
-    mutable std::mutex m_;
-    DimmConfig  cfg_;
-    DimmStatus  st_;
+    // Two narrow locks instead of one broad one. The previous single mutex was
+    // held for the whole of onFrame() -- including a full-frame spot search --
+    // while the UI called status() several times per frame, so a slow
+    // acquisition stalled the entire interface.
+    mutable std::mutex cfgM_;      // guards cfg_ only
+    mutable std::mutex statusM_;   // guards published_ only, held for a copy
+
+    DimmConfig cfg_;          // written by the UI thread
+    DimmStatus published_;    // read by the UI thread
+
+    // Grab-thread copy, refreshed once per frame so the rest of the work needs
+    // no lock at all.
+    DimmConfig localCfg_;
+
+    // Working state, touched only by the grab thread. No lock: onFrame() is
+    // called from exactly one thread, and control requests arrive as an atomic
+    // rather than by reaching in and mutating this.
+    DimmStatus work_;
+    enum class Command { None, Begin, Stop, ResetBurst };
+    std::atomic<Command> command_{ Command::None };
+
+    // Acquisition is expensive and pointless to retry at frame rate.
+    int64_t  lastAcquireNs_ = 0;
+    uint64_t burstCounter_ = 0;
 
     // Tracking state.
     double lastAx_ = 0, lastAy_ = 0, lastBx_ = 0, lastBy_ = 0;
@@ -163,11 +205,25 @@ private:
         double   noiseVar = 0;
     } pending_;
 
+    // Lag-1 accumulators. Only consecutive accepted frames contribute: a
+    // rejected frame breaks the chain, and pairing across a gap would
+    // understate the correlation.
+    double   lagSumProd_ = 0.0;
+    int      lagN_ = 0;
+    double   prevProjL_ = 0.0;
+    uint64_t prevSeq_ = 0;
+    bool     havePrevProj_ = false;
+
     double lastNoiseVar_ = 0.0;
     double intervalEmaNs_ = 0.0;
     int64_t lastArrivalNs_ = 0;
     int64_t requestedUs_ = 0;
+    // Written by the UI thread under cfgM_, read by the grab thread. Copied
+    // into localSetter_ alongside the config so the grab thread never touches
+    // the shared object -- assigning it once before start() happens to be safe
+    // in practice, but it is still a race by the letter of the memory model.
     std::function<bool(int64_t)> exposureSetter_;
+    std::function<bool(int64_t)> localSetter_;
 
     // Combined Welford across both exposures. Not used for the inversion --
     // that reads from acc_[] so the two exposures stay separated -- but it

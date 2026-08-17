@@ -227,6 +227,7 @@ public:
         sequence_  = 0;
         dropped_   = 0;
         nextDueNs_ = static_cast<int64_t>(SDL_GetTicksNS());
+        virtualNs_ = 0;
         streaming_ = true;
         return true;
     }
@@ -239,6 +240,12 @@ public:
     bool nextFrame(Frame& out, int timeoutMs, std::string& err) override {
         if (!streaming_) { err = "not streaming"; return false; }
 
+        if (syntheticParams().freeRun) {
+            // Still advance the clock so exposure and interval metadata stay
+            // self-consistent -- the analysis derives duty cycle from them.
+            nextDueNs_ += std::max<int64_t>(cfg_.exposureUs * 1000 + kReadoutNs,
+                                            1'000'000);
+        }
         const int64_t intervalNs =
             std::max<int64_t>(cfg_.exposureUs * 1000 + kReadoutNs, 1'000'000);
         const int64_t deadlineNs =
@@ -248,7 +255,7 @@ public:
         // default on Windows -- so sleeping in small increments overshoots every
         // wait at DIMM frame intervals. Sleep only the bulk, then spin the last
         // millisecond.
-        for (;;) {
+        for (; !syntheticParams().freeRun; ) {
             const int64_t now2 = static_cast<int64_t>(SDL_GetTicksNS());
             if (now2 >= nextDueNs_) break;
             if (now2 >= deadlineNs) return false;
@@ -261,9 +268,13 @@ public:
                 std::this_thread::yield();
             }
         }
-        nextDueNs_ += intervalNs;
+        if (syntheticParams().freeRun) {
+            // Metadata timestamps come from the virtual clock in this mode.
+            virtualNs_ += intervalNs;
+        }
+        nextDueNs_ += syntheticParams().freeRun ? 0 : intervalNs;
         const int64_t now = static_cast<int64_t>(SDL_GetTicksNS());
-        if (nextDueNs_ < now - intervalNs) {
+        if (!syntheticParams().freeRun && nextDueNs_ < now - intervalNs) {
             dropped_ += static_cast<int>((now - nextDueNs_) / intervalNs);
             nextDueNs_ = now + intervalNs;
         }
@@ -287,7 +298,8 @@ public:
         }
         m.exposureUs    = cfg_.exposureUs;
         m.gain          = cfg_.gain;
-        m.hostArrivalNs = static_cast<int64_t>(SDL_GetTicksNS());
+        m.hostArrivalNs = syntheticParams().freeRun
+            ? virtualNs_ : static_cast<int64_t>(SDL_GetTicksNS());
         m.sequence      = sequence_++;
 
         out = std::move(f);
@@ -507,6 +519,7 @@ private:
     uint64_t sequence_   = 0;
     int      dropped_    = 0;
     int64_t  nextDueNs_  = 0;
+    int64_t  virtualNs_  = 0;
     bool     streaming_  = false;
 };
 

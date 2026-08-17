@@ -347,6 +347,27 @@ void SettingsDialog::drawSite(DimmConfig& cfg) {
     DragD("Target altitude (deg)", &s.manualAltitudeDeg, 0.5, 1.0, 90.0, "%.1f");
     ImGui::EndDisabled();
     ImGui::Text("Airmass: %.3f", airmass(s.manualAltitudeDeg));
+
+    ImGui::SeparatorText("Science instrument");
+    ImGui::Checkbox("Paired with a science target", &s.haveScienceTarget);
+    if (s.haveScienceTarget) {
+        DragD("Target altitude (deg)", &s.scienceAltitudeDeg, 0.5, 1.0, 90.0, "%.1f");
+        ImGui::Text("Airmass: %.3f", airmass(s.scienceAltitudeDeg));
+        const double ratio =
+            std::pow(std::sin(s.manualAltitudeDeg * 3.14159265358979 / 180.0) /
+                     std::sin(s.scienceAltitudeDeg * 3.14159265358979 / 180.0), 0.6);
+        ImGui::Text("Seeing at the target is %.2fx the DIMM's own line of sight", ratio);
+        if (std::fabs(s.manualAltitudeDeg - s.scienceAltitudeDeg) > 10.0) {
+            ImGui::TextColored(kWarn,
+                "The two pointings differ by %.0f degrees in altitude.",
+                std::fabs(s.manualAltitudeDeg - s.scienceAltitudeDeg));
+            ImGui::TextWrapped(
+                "Airmass dominates directional variation in seeing, so matching "
+                "the DIMM to the science target in ALTITUDE keeps the projection "
+                "small and its errors smaller. A large mismatch is workable but "
+                "leans harder on the (cos z)^(3/5) law.");
+        }
+    }
     ImGui::TextWrapped(
         "Airmass dominates directional variation in seeing: r0 goes as "
         "(cos z)^(3/5), so a target at 60 deg zenith distance sees roughly 50%% "

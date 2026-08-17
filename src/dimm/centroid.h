@@ -59,6 +59,11 @@ void estimateBackground(const Frame&, double cx, double cy,
 SpotMeasurement measureSpot(const Frame&, double guessX, double guessY,
                             const CentroidConfig&);
 
+// True when the last detectSpots() call hit its candidate ceiling, meaning the
+// detection threshold is far too low for the current background. Thread-local
+// because detection runs on the grab thread.
+extern thread_local bool detectionOverflowed;
+
 struct Detection {
     double x = 0.0, y = 0.0;
     double peak = 0.0;

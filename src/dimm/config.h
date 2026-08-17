@@ -210,10 +210,16 @@ struct SiteConfig {
     double elevationM   = 0.0;
     std::string name;
 
-    // Airmass for the zenith correction. Read from a mount over Alpaca where
-    // available, otherwise entered by hand.
+    // Altitude the DIMM itself is pointing at. Used for the zenith correction.
     bool   useMountAltitude = false;
     double manualAltitudeDeg = 90.0;
+
+    // Altitude of the SCIENCE instrument's target, when there is one. The DIMM
+    // observes its own star, so its line-of-sight seeing describes the DIMM's
+    // pointing, not the science target's. Projecting the zenith value onto this
+    // altitude gives the number a paired dataset actually wants.
+    bool   haveScienceTarget = false;
+    double scienceAltitudeDeg = 90.0;
 };
 
 // Sarazin & Roddier is the standard approximation and what most amateur DIMMs
