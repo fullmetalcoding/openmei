@@ -357,10 +357,22 @@ if(MSVC)
 endif()
 
 # Copy SDL3.dll (and anything else shared) next to the exe. Requires 3.21+.
-add_custom_command(TARGET openmei POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:openmei> $<TARGET_FILE_DIR:openmei>
-    COMMAND_EXPAND_LISTS)
+#
+# Windows only, and not merely as an optimisation: TARGET_RUNTIME_DLLS is empty
+# on platforms without DLLs, so the command collapses to
+#     cmake -E copy_if_different <destination>
+# with no sources. That is invalid usage, and because it runs POST_BUILD the
+# link succeeds first -- producing a build that reports success and then dies
+# printing cmake's help text.
+#
+# Nothing is needed on Linux or macOS: SDL3.so is found through the RPATH CMake
+# already sets on the executable.
+if(WIN32)
+    add_custom_command(TARGET openmei POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:openmei> $<TARGET_FILE_DIR:openmei>
+        COMMAND_EXPAND_LISTS)
+endif()
 
 # -----------------------------------------------------------------------------
 #  Vendor DLLs
@@ -410,7 +422,9 @@ install(TARGETS openmei RUNTIME DESTINATION .)
 # SDL3.dll and anything else CMake knows we link. Vendor SDKs are invisible here
 # by design -- they are loaded at runtime, so CMake has no dependency edge to
 # them and they must be handled separately above.
-install(FILES $<TARGET_RUNTIME_DLLS:openmei> DESTINATION . OPTIONAL)
+if(WIN32)
+    install(FILES $<TARGET_RUNTIME_DLLS:openmei> DESTINATION . OPTIONAL)
+endif()
  
 if(OPENMEI_VENDOR_DLLS)
     install(FILES ${OPENMEI_VENDOR_DLLS} DESTINATION .)
