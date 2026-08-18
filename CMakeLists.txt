@@ -36,6 +36,16 @@ option(OPENMEI_BUILD_TESTS   "Build unit tests"                                 
 # instead of loading it at runtime. Off by default -- see docs/linking.md.
 option(OPENMEI_STATIC_ASI    "Statically link the ZWO SDK instead of dlopen"     OFF)
 
+
+# Bundle vendor camera DLLs into the installer. OFF by default and deliberately
+# so: shipping them is redistribution of someone else's binaries, and the terms
+# are mostly unstated rather than permissive. Turn this on only once you have
+# written permission from each vendor -- see THIRD_PARTY.md.
+option(OPENMEI_BUNDLE_VENDOR_DLLS "Include vendor camera DLLs in the package" OFF)
+set(OPENMEI_VENDOR_DLL_DIR "${CMAKE_SOURCE_DIR}/../camdlls"
+    CACHE PATH "Directory holding vendor camera DLLs, outside the repository")
+ 
+
 # -----------------------------------------------------------------------------
 #  Dependency versions -- bump deliberately, not automatically.
 #  Pinned tags rather than branches so a clean clone is reproducible.
@@ -338,11 +348,118 @@ add_custom_command(TARGET openmei POST_BUILD
     COMMAND_EXPAND_LISTS)
 
 # -----------------------------------------------------------------------------
+#  Vendor DLLs
+#
+#  Kept outside the repository (default ../camdlls) so that cloning OpenMEI
+#  never brings someone else's binaries with it. Architecture subdirectories are
+#  preferred when present, because an x86 DLL in an x64 build fails at
+#  SDL_LoadObject with an error that looks like "SDK not installed".
+# -----------------------------------------------------------------------------
+ 
+set(OPENMEI_VENDOR_DLLS "")
+if(OPENMEI_BUNDLE_VENDOR_DLLS)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_arch_dir "${OPENMEI_VENDOR_DLL_DIR}/x64")
+    else()
+        set(_arch_dir "${OPENMEI_VENDOR_DLL_DIR}/x86")
+    endif()
+    if(EXISTS "${_arch_dir}")
+        file(GLOB OPENMEI_VENDOR_DLLS "${_arch_dir}/*.dll")
+    elseif(EXISTS "${OPENMEI_VENDOR_DLL_DIR}")
+        file(GLOB OPENMEI_VENDOR_DLLS "${OPENMEI_VENDOR_DLL_DIR}/*.dll")
+    endif()
+ 
+    if(OPENMEI_VENDOR_DLLS)
+        list(LENGTH OPENMEI_VENDOR_DLLS _n)
+        message(STATUS "Bundling ${_n} vendor DLL(s) from ${OPENMEI_VENDOR_DLL_DIR}")
+        # Also stage them next to the executable so F5 in Visual Studio finds a
+        # camera without a separate install step.
+        add_custom_command(TARGET openmei POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${OPENMEI_VENDOR_DLLS} $<TARGET_FILE_DIR:openmei>
+            COMMAND_EXPAND_LISTS)
+    else()
+        message(WARNING
+            "OPENMEI_BUNDLE_VENDOR_DLLS is ON but no DLLs were found under "
+            "${OPENMEI_VENDOR_DLL_DIR}. Note file(GLOB) runs at configure time, "
+            "so adding DLLs later needs a reconfigure.")
+    endif()
+endif()
+ 
+# -----------------------------------------------------------------------------
+#  Install and package
+# -----------------------------------------------------------------------------
+ 
+install(TARGETS openmei RUNTIME DESTINATION .)
+ 
+# SDL3.dll and anything else CMake knows we link. Vendor SDKs are invisible here
+# by design -- they are loaded at runtime, so CMake has no dependency edge to
+# them and they must be handled separately above.
+install(FILES $<TARGET_RUNTIME_DLLS:openmei> DESTINATION . OPTIONAL)
+ 
+if(OPENMEI_VENDOR_DLLS)
+    install(FILES ${OPENMEI_VENDOR_DLLS} DESTINATION .)
+endif()
+ 
+install(FILES
+    "${CMAKE_SOURCE_DIR}/README.md"
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    DESTINATION . OPTIONAL)
+if(EXISTS "${CMAKE_SOURCE_DIR}/THIRD_PARTY.md")
+    install(FILES "${CMAKE_SOURCE_DIR}/THIRD_PARTY.md" DESTINATION .)
+endif()
+ 
+if(MSVC)
+    # The VC++ runtime, so the installer does not depend on the user already
+    # having the redistributable.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+    include(InstallRequiredSystemLibraries)
+endif()
+ 
+set(CPACK_PACKAGE_NAME              "OpenMEI")
+set(CPACK_PACKAGE_VENDOR            "OpenMEI Project")
+set(CPACK_PACKAGE_VERSION           "${OPENMEI_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open-source DIMM atmospheric seeing monitor")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "OpenMEI")
+set(CPACK_PACKAGE_FILE_NAME
+    "OpenMEI-${OPENMEI_VERSION_FULL}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+if(EXISTS "${CMAKE_SOURCE_DIR}/LICENSE")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+endif()
+ 
+if(WIN32)
+    # ZIP first: it always works, needs no external tooling, and is what CI can
+    # produce unconditionally. NSIS is added only when makensis is present.
+    set(CPACK_GENERATOR "ZIP")
+    find_program(MAKENSIS_EXECUTABLE NAMES makensis)
+    if(MAKENSIS_EXECUTABLE)
+        list(APPEND CPACK_GENERATOR "NSIS")
+        set(CPACK_NSIS_PACKAGE_NAME       "OpenMEI ${OPENMEI_VERSION}")
+        set(CPACK_NSIS_DISPLAY_NAME       "OpenMEI Seeing Monitor")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "openmei.exe")
+        set(CPACK_NSIS_MODIFY_PATH        OFF)
+        set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+        set(CPACK_NSIS_CREATE_ICONS_EXTRA
+            "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\OpenMEI.lnk' '$INSTDIR\\\\openmei.exe'")
+        set(CPACK_NSIS_DELETE_ICONS_EXTRA
+            "Delete '$SMPROGRAMS\\\\$START_MENU\\\\OpenMEI.lnk'")
+    else()
+        message(STATUS "makensis not found -- ZIP package only")
+    endif()
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+ 
+include(CPack)
+ 
+# -----------------------------------------------------------------------------
 #  Summary
 # -----------------------------------------------------------------------------
 
 message(STATUS "")
-message(STATUS "OpenMEI ${PROJECT_VERSION}")
+message(STATUS "OpenMEI ${OPENMEI_VERSION_FULL}")
+message(STATUS "  Vendor DLLs   : ${OPENMEI_BUNDLE_VENDOR_DLLS} (${OPENMEI_VENDOR_DLL_DIR})")
+message(STATUS "  Package       : ${CPACK_GENERATOR}")
 message(STATUS "  Alpaca server : ${OPENMEI_BUILD_ALPACA}")
 message(STATUS "  Vendor SDKs   : loaded at runtime (no link-time dependency)")
 message(STATUS "  Output        : ${CMAKE_BINARY_DIR}/bin/<config>")

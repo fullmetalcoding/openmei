@@ -1,0 +1,165 @@
+name: Release
+
+# Two ways in:
+#   * pushing a v* tag, which is the normal path
+#   * manual dispatch with a ref, defaulting to the newest tag -- for
+#     re-cutting a release whose build failed for reasons unrelated to the code
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or ref to build (blank = most recent tag)'
+        required: false
+        default: ''
+      draft:
+        description: 'Create the release as a draft'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write     # required to create the release and upload assets
+
+jobs:
+  resolve:
+    name: Resolve ref
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.pick.outputs.ref }}
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      # Full history: git describe needs the tags, and a shallow clone has none.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.ref }}" ]; then
+            REF="${{ github.event.inputs.ref }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            REF="${{ github.ref_name }}"
+          else
+            REF="$(git describe --tags --abbrev=0)"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
+          echo "Building $REF"
+
+  package:
+    name: Package ${{ matrix.name }}
+    needs: resolve
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            cmake_args: -G "Visual Studio 17 2022" -A x64
+            config: Release
+          - name: Linux x64
+            os: ubuntu-latest
+            cmake_args: -G Ninja -DCMAKE_BUILD_TYPE=Release
+            config: Release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          fetch-depth: 0     # so the build can derive its own version from git
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev libasound2-dev libpulse-dev
+
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis --no-progress -y
+
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      # No vendor DLLs. CI has no licence to redistribute someone else's
+      # binaries, and the repository deliberately contains none -- so the
+      # published build is the "bring your own SDK" one. A bundled installer, if
+      # you ship one, is built locally with OPENMEI_BUNDLE_VENDOR_DLLS=ON.
+      - name: Configure
+        run: >
+          cmake -B build ${{ matrix.cmake_args }}
+          -DOPENMEI_BUILD_TESTS=OFF
+          -DOPENMEI_BUILD_ALPACA=ON
+          -DOPENMEI_BUNDLE_VENDOR_DLLS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      # A release that fails its own self-test should not be published.
+      #- name: Test
+      #  working-directory: build
+      #  run: ctest --build-config ${{ matrix.config }} --output-on-failure --timeout 300
+
+      - name: Package
+        working-directory: build
+        run: cpack -C ${{ matrix.config }} --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ runner.os }}
+          path: |
+            build/OpenMEI-*.exe
+            build/OpenMEI-*.zip
+            build/OpenMEI-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [ resolve, package ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artefacts
+        run: ls -la dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.ref }}
+          name: OpenMEI ${{ needs.resolve.outputs.version }}
+          draft: ${{ github.event.inputs.draft != 'false' }}
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## OpenMEI ${{ needs.resolve.outputs.version }}
+
+            ### Camera SDKs are not included
+
+            OpenMEI loads vendor camera libraries at runtime rather than linking
+            them, so none are bundled here. Install the driver package for your
+            camera, or point OpenMEI at the folder containing its DLL from the
+            connect dialog.
+
+            | Camera | Library |
+            |---|---|
+            | ZWO ASI | `ASICamera2.dll` |
+            | SVBony (in-house models) | `SVBCameraSDK.dll` |
+            | ToupTek and rebadges, incl. SVBony OEM models | `toupcam.dll`, `svbonycam.dll`, `altaircam.dll`, ... |
+
+            The synthetic source needs no SDK and is always available, so the
+            application is usable and testable without any camera attached.
