@@ -166,6 +166,7 @@ set(OPENMEI_SOURCES
     src/main.cpp
     src/app/settings_store.cpp
     src/app/settings_store.h
+    src/app/seeing_history.cpp
 
     # --- camera abstraction -------------------------------------------------
     src/camera/camera.h
@@ -205,6 +206,8 @@ set(OPENMEI_SOURCES
     src/ui/settings_dialog.cpp
     src/ui/dimm_panel.cpp
     src/ui/dimm_panel.h
+    src/ui/history_panel.cpp
+    src/ui/history_panel.h
    
 )
 

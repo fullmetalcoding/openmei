@@ -69,7 +69,7 @@ The fundamental DIMM measurement is not the absolute position of either star ima
 
 ```math
 \Delta x = x_2-x_1
-
+\\
 \Delta y = y_2-y_1
 ```
 Because telescope tracking errors, mount vibration, and much of the mechanical motion move both images together, subtracting the two centroid positions strongly rejects common-mode motion.
@@ -97,7 +97,7 @@ and
 \sigma_t^2
 ```
 
-Under Kolmogorov turbulence, these variances are related to the atmospheric coherence length, or **Fried parameter**, (r_0).
+Under Kolmogorov turbulence, these variances are related to the atmospheric coherence length, or **Fried parameter**, $r_0$.
 
 OpenMEI represents the relationship as
 
@@ -142,7 +142,7 @@ K_t =
 
 where $c=0.179$ for the original Sarazin & Roddier formulation.
 
-OpenMEI also provides the corrected (c=0.182) coefficient discussed in the mini-DIMM analysis by Yu et al.
+OpenMEI also provides the corrected $c=0.182$ coefficient discussed in the mini-DIMM analysis by Yu et al.
 
 The classic approximation should normally be used with
 
@@ -263,6 +263,7 @@ The exact geometry should be chosen so that neither aperture is vignetted.
 
 [`masks/`](masks/) contains STL/step files for 3d printable masks. Currently available are: 
 
+
 [`/masks/DIM_MASK_80MMx53x25.4.stl`](DIM_MASK_80MMx53x25.4.stl) A bare bones basic mask for an 80 mm class scope with sub aperture size 25.4mm and separation 53mm. Designed and tested on an Orion ST80. 
 
 ---
@@ -288,6 +289,8 @@ Be sure to search for "wedge window" instead of "wedge prism," as manufacturers 
 A good prism wedge angle would be something less than 5-10 arc minutes, however you may find these to be exceeding difficult to find. 
 
 If that is the case, consider building a Risley prism (not covered here), in which case, you should be OK to use a pair of wedge prisms roughly 30 arcmin->1 degree instead of a single wedge window.
+
+A Risley prism has the advantage that it becomes possible to control the deflection angle of the second spot, at the cost of more complex construction.
 
 ---
 
@@ -490,7 +493,7 @@ This allows the OpenMEI source tree to remain independent of vendor binary SDK d
 
 OpenMEI always includes a synthetic camera backend.
 
-The synthetic source generates a controlled DIMM image stream using known atmospheric parameters. This provides a ground truth against which the centroiding, variance estimation, (r_0) inversion, exposure correction, and reporting pipeline can be tested without physical hardware.
+The synthetic source generates a controlled DIMM image stream using known atmospheric parameters. This provides a ground truth against which the centroiding, variance estimation, $r_0$ inversion, exposure correction, and reporting pipeline can be tested without physical hardware.
 
 The synthetic backend is useful for:
 
@@ -589,9 +592,9 @@ This paper develops the statistical description of atmospheric wavefront distort
 
 OpenMEI uses the standard Kolmogorov seeing relation
 
-[
+```math
 \epsilon \approx 0.98\frac{\lambda}{r_0}.
-]
+```
 
 ---
 
@@ -629,7 +632,7 @@ and
 \right).
 ```
 
-The OpenMEI implementation rearranges these expressions into geometry-dependent response coefficients (K_l) and (K_t).
+The OpenMEI implementation rearranges these expressions into geometry-dependent response coefficients $K_l$ and $K_t$.
 
 ---
 
@@ -650,7 +653,7 @@ This paper revisits DIMM theory and discusses several effects important to quant
 
 OpenMEI's paired-exposure seeing correction is based on the modified exponential extrapolation described in this work.
 
-For seeing estimates (\epsilon_1) and (\epsilon_2) obtained at exposures (t) and (2t),
+For seeing estimates $\epsilon_1$ and $\epsilon_2$ obtained at exposures $t$ and $2t$,
 
 ```math
 c =
@@ -740,7 +743,7 @@ Vendor camera SDK headers under:
 
 are vendor-supplied interface definitions and are **not covered by the OpenMEI license**.
 
-OpenMEI does not distribute vendor SDK DLLs, shared libraries, or static libraries.
+OpenMEI does not distribute vendor SDK DLLs, shared libraries, or static libraries as part of its source code.
 
 ---
 

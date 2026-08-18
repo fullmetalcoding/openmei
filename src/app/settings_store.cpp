@@ -246,8 +246,24 @@ namespace mei {
             c.manualKLong = get<double>(o, "manualKLong", c.manualKLong);
             c.manualKTran = get<double>(o, "manualKTran", c.manualKTran);
             c.zenithCorrect = get<bool>(o, "zenithCorrect", c.zenithCorrect);
+            c.historyWindowS = get<double>(o, "historyWindowS", c.historyWindowS);
+            c.displayLocalTime = get<bool>(o, "displayLocalTime", c.displayLocalTime);
+            c.use24HourClock = get<bool>(o, "use24HourClock", c.use24HourClock);
             c.sqlitePath = get<std::string>(o, "sqlitePath", c.sqlitePath);
             c.logRawCentroids = get<bool>(o, "logRawCentroids", c.logRawCentroids);
+        }
+
+        {
+            const json& o = sub(j, "historyView");
+            HistoryView& v = s.historyView;
+            v.legendCorner = get<int>(o, "legendCorner", v.legendCorner);
+            v.legendOutside = get<bool>(o, "legendOutside", v.legendOutside);
+            v.legendHidden = get<bool>(o, "legendHidden", v.legendHidden);
+            v.autoFitY = get<bool>(o, "autoFitY", v.autoFitY);
+            v.smoothingMinutes = get<float>(o, "smoothingMinutes", v.smoothingMinutes);
+            v.showBand = get<bool>(o, "showBand", v.showBand);
+            v.showR0 = get<bool>(o, "showR0", v.showR0);
+            v.showLos = get<bool>(o, "showLos", v.showLos);
         }
 
         {
@@ -377,8 +393,22 @@ namespace mei {
             {"manualKLong", d.reporting.manualKLong},
             {"manualKTran", d.reporting.manualKTran},
             {"zenithCorrect", d.reporting.zenithCorrect},
+            {"historyWindowS", d.reporting.historyWindowS},
+            {"displayLocalTime", d.reporting.displayLocalTime},
+            {"use24HourClock", d.reporting.use24HourClock},
             {"sqlitePath", d.reporting.sqlitePath},
             {"logRawCentroids", d.reporting.logRawCentroids},
+        };
+
+        j["historyView"] = {
+            {"legendCorner", s.historyView.legendCorner},
+            {"legendOutside", s.historyView.legendOutside},
+            {"legendHidden", s.historyView.legendHidden},
+            {"autoFitY", s.historyView.autoFitY},
+            {"smoothingMinutes", s.historyView.smoothingMinutes},
+            {"showBand", s.historyView.showBand},
+            {"showR0", s.historyView.showR0},
+            {"showLos", s.historyView.showLos},
         };
 
         j["alpaca"] = {
