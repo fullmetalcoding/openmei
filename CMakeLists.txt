@@ -113,7 +113,20 @@ FetchContent_Declare(json
     GIT_TAG        ${JSON_TAG}
     GIT_SHALLOW    TRUE)
 
+# CMake 4 removed compatibility with projects declaring cmake_minimum_required
+# below 3.5, and glew-cmake still declares an older minimum. This is the
+# sanctioned escape hatch, scoped to the dependency build so our own project
+# keeps its real minimum. Unknown and harmless on CMake < 3.31.
+set(_mei_saved_policy_min "${CMAKE_POLICY_VERSION_MINIMUM}")
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 FetchContent_MakeAvailable(SDL3 glew imgui implot httplib json)
+
+if(_mei_saved_policy_min STREQUAL "")
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+else()
+    set(CMAKE_POLICY_VERSION_MINIMUM "${_mei_saved_policy_min}")
+endif()
 
 # -----------------------------------------------------------------------------
 #  ImGui / ImPlot targets
@@ -247,6 +260,7 @@ if(OPENMEI_BUILD_ALPACA)
 #        src/net/telemetry_socket.cpp # newline-delimited JSON push feed
     )
 endif()
+
 
 add_executable(openmei ${OPENMEI_SOURCES})
 
