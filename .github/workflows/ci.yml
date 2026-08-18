@@ -74,7 +74,7 @@ jobs:
         run: >
           cmake -B build ${{ matrix.preset_args }}
           -DOPENMEI_BUILD_TESTS=OFF
-          -DOPENMEI_BUILD_ALPACA=OFF
+          -DOPENMEI_BUILD_ALPACA=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.config }} --parallel
