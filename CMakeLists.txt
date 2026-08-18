@@ -188,6 +188,7 @@ mei_detect_vendor("Player One" "playerone/PlayerOneCamera.h" HAVE_PLAYERONE HAVE
 set(OPENMEI_SOURCES
     src/main.cpp
     src/app/settings_store.cpp
+    src/app/uuid.h
     src/app/settings_store.h
     src/app/seeing_history.cpp
 

@@ -22,6 +22,7 @@
 #include "ui/camera_dialog.h"
 #include "app/seeing_history.h"
 #include "app/settings_store.h"
+#include "app/uuid.h"
 #ifdef OPENMEI_ALPACA
 #include "net/alpaca_server.h"
 #endif
@@ -1168,6 +1169,8 @@ int main(int, char**) {
     // --- Dear ImGui ----------------------------------------------------------
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // ImPlot keeps its own context alongside ImGui's; without this the first
+    // plot call dereferences null.
     ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -1185,15 +1188,16 @@ int main(int, char**) {
             app.setStatus(mei::Severity::Warning,
                 "Settings could not be loaded, using defaults: " + perr);
         }
-        // Alpaca's UniqueID identifies a device INSTANCE. Generated once here
-        // and persisted: regenerating it per launch loses the client's saved
-        // selection, and a compile-time constant would make two installations
-        // on one network indistinguishable.
+        // Identity is a property of the installation, not of the Alpaca server
+        // -- which is why it is generated here and unconditionally, rather than
+        // by a component that may be compiled out.
         if (app.prefs.installationId.empty()) {
-            app.prefs.installationId = mei::AlpacaServer::generateUniqueId();
+            app.prefs.installationId = mei::generateUuid();
             app.prefsDirty = true;
         }
+#ifdef OPENMEI_ALPACA
         app.prefs.alpaca.uniqueId = app.prefs.installationId;
+#endif
         if (app.prefs.haveStream) app.want = app.prefs.stream;
         SDL_Log("settings: %s", mei::settingsPath().c_str());
     }
@@ -1226,11 +1230,12 @@ int main(int, char**) {
         mei::ui::StatusBar(app);
         mei::ui::CentralArea(app);
         mei::ui::SyntheticPanel(app);
+
         {
             // One point per completed burst. Keyed on the burst counter for the
             // same reason the Alpaca feed is: a steady atmosphere produces
             // near-identical values, so nothing derived from the numbers
-            // themselves can tell a new result from a repeat.
+            // themselves can distinguish a new result from a repeat.
             const mei::DimmStatus hs = app.processor.status();
             if (hs.haveResult) {
                 using namespace std::chrono;
