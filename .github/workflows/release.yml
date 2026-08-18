@@ -59,7 +59,11 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            cmake_args: -G "Visual Studio 17 2022" -A x64
+            # No generator named on purpose. Pinning "Visual Studio 17 2022"
+            # breaks the moment the hosted image rolls to a newer Visual Studio,
+            # with an error that reads as "no Visual Studio installed" rather
+            # than "not that one". CMake picks the newest it finds.
+            cmake_args: -A x64
             config: Release
           - name: Linux x64
             os: ubuntu-latest
@@ -85,6 +89,21 @@ jobs:
       - name: Install NSIS (Windows)
         if: runner.os == 'Windows'
         run: choco install nsis --no-progress -y
+
+      # Self-diagnosing: if the generator ever fails to resolve again, the log
+      # says what was actually on the machine instead of only what was missing.
+      - name: Report toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -products * -format value -property displayName
+            & $vswhere -products * -format value -property installationVersion
+          } else {
+            Write-Host "vswhere not found"
+          }
 
       - name: Cache FetchContent sources
         uses: actions/cache@v4

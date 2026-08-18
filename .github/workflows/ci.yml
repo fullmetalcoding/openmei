@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight run on the same branch. FetchContent
+# builds are the slow part; there is no value in finishing a stale one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (gcc)
+            os: ubuntu-latest
+            preset_args: -G Ninja -DCMAKE_BUILD_TYPE=Release
+            config: Release
+          - name: Windows (MSVC)
+            os: windows-latest
+            # Deliberately unnamed generator -- see release.yml. A pinned
+            # "Visual Studio 17 2022" fails as soon as the hosted image moves on.
+            preset_args: -A x64
+            config: Release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # SDL3 and GLEW are built from source by FetchContent, so their build
+      # dependencies must be present even though nothing here opens a window.
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev libasound2-dev libpulse-dev
+
+      # The dependency tree is pinned by tag in CMakeLists.txt, so keying the
+      # cache on that file's hash invalidates exactly when a version is bumped.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      # No vendor SDK headers exist in the repository, so every camera backend
+      # is skipped and the build proceeds on the synthetic source alone. That is
+      # the whole point of runtime SDK loading: CI needs no hardware and no
+      # proprietary binaries, and a contributor without cameras gets the same
+      # build the maintainers do.
+      - name: Report toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -products * -format value -property displayName
+          }
+
+      - name: Configure
+        run: >
+          cmake -B build ${{ matrix.preset_args }}
+          -DOPENMEI_BUILD_TESTS=OFF
+          -DOPENMEI_BUILD_ALPACA=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+     # - name: Test
+     #   working-directory: build
+     #   run: ctest --build-config ${{ matrix.config }} --output-on-failure --timeout 300
+
+  hygiene:
+    name: Source hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A generation artefact once left stray CJK characters in a CMake comment.
+      # Comments are exactly where such things survive, because no compiler ever
+      # looks at them.
+      - name: Reject non-ASCII in sources
+        run: |
+          if grep -rnP '[^\x00-\x7F]' \
+               --include='*.cpp' --include='*.h' --include='*.hpp' \
+               --include='CMakeLists.txt' --include='*.cmake' \
+               src tests CMakeLists.txt 2>/dev/null; then
+            echo "::error::Non-ASCII characters found in source. See matches above."
+            exit 1
+          fi
+          echo "No non-ASCII characters in source."
