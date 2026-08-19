@@ -33,6 +33,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # git describe needs the tags; the default shallow clone has none,
+          # so without this every CI build reports the fallback version.
+          fetch-depth: 0
 
       # SDL3 and GLEW are built from source by FetchContent, so their build
       # dependencies must be present even though nothing here opens a window.
