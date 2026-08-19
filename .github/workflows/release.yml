@@ -88,7 +88,10 @@ jobs:
 
       - name: Install NSIS (Windows)
         if: runner.os == 'Windows'
-        run: choco install nsis --no-progress -y
+        run: | 
+          choco install nsis --no-progress -y
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+        shell: pwsh
 
       # Self-diagnosing: if the generator ever fails to resolve again, the log
       # says what was actually on the machine instead of only what was missing.
