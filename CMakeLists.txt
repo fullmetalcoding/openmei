@@ -13,10 +13,58 @@
 
 cmake_minimum_required(VERSION 3.21)   # 3.21 for $<TARGET_RUNTIME_DLLS:...>
 
+ -----------------------------------------------------------------------------
+#  Version
+#
+#  Derived from the most recent git tag so a release artefact cannot disagree
+#  with the tag it was built from. Three constraints shape this:
+#
+#    * project() consumes VERSION at parse time, so the query must run first.
+#    * project(VERSION) accepts only X.Y.Z -- it will reject a describe string
+#      like v0.2.1-4-gabc123 -- so the numeric part is parsed out and the full
+#      string kept separately for package names and display.
+#    * git describe needs the TAGS. A shallow clone has none, so any CI job that
+#      builds a release must use fetch-depth: 0 or every artefact silently gets
+#      the fallback version below.
+#
+#  The fallback covers source tarballs, which have no .git at all. Bump it when
+#  tagging so a tarball build reports something honest rather than 0.0.0.
+# -----------------------------------------------------------------------------
+
+set(OPENMEI_VERSION      "0.1.0")
+set(OPENMEI_VERSION_FULL "0.1.0-nogit")
+
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --tags --dirty --always
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE  OPENMEI_GIT_DESCRIBE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(OPENMEI_GIT_DESCRIBE)
+        set(OPENMEI_VERSION_FULL "${OPENMEI_GIT_DESCRIBE}")
+        # v1.2.3 / v1.2.3-4-gabcdef / v1.2.3-dirty  ->  1.2.3
+        if(OPENMEI_GIT_DESCRIBE MATCHES "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+            set(OPENMEI_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+        else()
+            # describe fell back to a bare commit hash: no tag is reachable.
+            message(STATUS "No version tag reachable; using ${OPENMEI_VERSION}")
+        endif()
+    endif()
+endif()
+
+message(STATUS "OpenMEI version: ${OPENMEI_VERSION} (${OPENMEI_VERSION_FULL})")
+
 project(OpenMei
-    VERSION 0.1.0
+    VERSION ${OPENMEI_VERSION}
     DESCRIPTION "Open-source DIMM seeing monitor"
     LANGUAGES CXX)
+
+# Available to the application, so an About box or a log line can report the
+# exact build rather than a number someone remembered to bump.
+add_compile_definitions(OPENMEI_VERSION_STRING="${OPENMEI_VERSION_FULL}")
+
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
