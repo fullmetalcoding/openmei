@@ -477,8 +477,10 @@ else()
     # Install the target itself so CMake resolves the versioned soname and the
     # symlink chain -- copying $<TARGET_FILE:SDL3::SDL3> alone gives you
     # libSDL3.so.0.2.0 with nothing pointing at it.
-    install(IMPORTED_RUNTIME_ARTIFACTS SDL3::SDL3
-            LIBRARY DESTINATION lib COMPONENT openmei)
+    install(TARGETS SDL3-shared
+                LIBRARY DESTINATION lib
+                        COMPONENT openmei
+                        NAMELINK_SKIP)
 endif()
 
 if(NOT WIN32 AND NOT APPLE)
