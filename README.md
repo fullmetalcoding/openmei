@@ -268,7 +268,7 @@ The exact geometry should be chosen so that neither aperture is vignetted.
 
 ---
 
-## 3. Wedge prism/Wedge window
+## 3a. Wedge prism/Wedge window
 
 One aperture must produce a displaced image of the star.
 
@@ -293,6 +293,104 @@ If that is the case, consider building a Risley prism (not covered here), in whi
 A Risley prism has the advantage that it becomes possible to control the deflection angle of the second spot, at the cost of more complex construction.
 
 ---
+## 3b. H-DIMM (Hartmann Differential Image Motion Monitor)
+
+OpenMEI can also be used with a **Hartmann-DIMM (H-DIMM)** configuration. An H-DIMM uses the same basic two-sub-aperture geometry as a conventional DIMM, but does not require a wedge prism to separate the two stellar images.
+
+Instead, the camera is placed slightly away from the telescope's nominal focal plane. At exact focus, light from both sub-apertures forms an image at the same detector position. When the detector is moved slightly inside or outside focus, the two sub-aperture beams are intercepted before or after they cross, producing two spatially separated stellar images.
+
+A basic two-aperture H-DIMM mask therefore consists of:
+
+* two equal circular sub-apertures of diameter $D$;
+* a known center-to-center baseline $B$;
+* no prism or other beam-steering optic.
+
+The mask geometry should satisfy the same requirements as an ordinary DIMM. In particular, the two apertures should have the same diameter, and a baseline ratio of approximately
+
+```math
+B/D \ge 2
+```
+
+is recommended when using the standard Sarazin-Roddier DIMM response coefficients.
+
+### Setting the Spot Separation
+
+In an H-DIMM, the spot separation is controlled by the amount of detector defocus rather than by a prism.
+
+For small defocus, the physical separation of the two stellar images is approximately
+
+```math
+s \approx B\frac{|\Delta z|}{f},
+```
+
+where:
+
+* $s$ is the spot separation on the detector,
+* $B$ is the sub-aperture center-to-center spacing,
+* $\Delta z$ is the detector displacement from nominal focus,
+* $f$ is the effective telescope focal length.
+
+For a detector with pixel pitch $p$, the separation in pixels is approximately
+
+```math
+s_{\mathrm{px}} \approx
+\frac{B|\Delta z|}{fp}.
+```
+
+For example, a mask with 25.4 mm sub-apertures separated by 53 mm on a 400 mm focal-length telescope with 2.9 µm pixels gives approximately
+
+```math
+46\ \mathrm{pixels/mm}
+```
+
+of detector defocus. With a 2× Barlow and an effective focal length of approximately 800 mm, the same geometry gives approximately
+
+```math
+23\ \mathrm{pixels/mm}.
+```
+
+A modest defocus of 1–2 mm can therefore provide a convenient tens-of-pixels separation while retaining good centroid sampling.
+
+The maximum useful defocus is limited by the depth of focus of each individual sub-aperture. Smaller sub-apertures have a relatively large depth of focus, allowing the detector to be moved far enough from the parent telescope's focal plane to separate the two images while the individual Hartmann spots remain compact and suitable for centroiding.
+
+### Plate-Scale Calibration
+
+Because an H-DIMM operates away from the nominal focal plane, the effective angular scale at the detector should not be assumed from focal length and pixel size alone.
+
+For best accuracy, **perform an empirical plate-scale calibration at the same defocus position used for measurements**. A stellar drift calibration directly measures the actual angular displacement per pixel in the operating configuration and avoids relying on an in-focus theoretical field of view.
+
+Once calibrated, OpenMEI can process the two H-DIMM centroids in the same way as a prism-separated DIMM:
+
+```math
+\text{centroids}
+\rightarrow
+\text{differential motion}
+\rightarrow
+\sigma_L^2,\sigma_T^2
+\rightarrow
+r_0
+\rightarrow
+\text{seeing}.
+```
+
+The software does not fundamentally depend on a prism to obtain the seeing measurement; the prism or Hartmann defocus is simply the mechanism used to make the two sub-aperture images distinguishable.
+
+### Practical Advantages
+
+Compared with a prism-based DIMM, an H-DIMM can provide several practical advantages:
+
+* no wedge prism or Risley pair is required;
+* both sub-apertures have identical optical paths and throughput;
+* there is no prism-induced chromatic dispersion;
+* there is no brightness imbalance caused by prism transmission losses;
+* the mask can be manufactured as a simple opaque plate with two holes;
+* spot separation can be adjusted mechanically using focus rather than by changing or rotating optical elements.
+
+The principal tradeoff is that spot separation and detector focus are coupled. The detector must be defocused enough to separate the two images while remaining within the useful depth-of-focus range of the individual sub-apertures.
+
+For experimental use, a conventional two-hole DIMM mask can therefore be converted to an H-DIMM simply by removing the prism and operating the camera at an appropriate, calibrated defocus position.
+---
+
 
 ## 4. Camera
 
