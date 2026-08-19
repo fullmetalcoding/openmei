@@ -424,6 +424,22 @@ install(TARGETS openmei RUNTIME DESTINATION .)
 # them and they must be handled separately above.
 if(WIN32)
     install(FILES $<TARGET_RUNTIME_DLLS:openmei> DESTINATION . OPTIONAL)
+else()
+    # TARGET_RUNTIME_DLLS is Windows-only, but SDL3 is a shared library here too.
+    # Install the target itself so CMake resolves the versioned soname and the
+    # symlink chain -- copying $<TARGET_FILE:SDL3::SDL3> alone gives you
+    # libSDL3.so.0.2.0 with nothing pointing at it.
+    install(IMPORTED_RUNTIME_ARTIFACTS SDL3::SDL3
+            LIBRARY DESTINATION lib COMPONENT openmei)
+endif()
+
+if(NOT WIN32 AND NOT APPLE)
+    set_target_properties(openmei PROPERTIES
+        # $ORIGIN is resolved at load time relative to the executable, so the
+        # tree relocates anywhere. The build-tree RPATH CMake adds by default is
+        # an absolute path into the build directory and is useless once shipped.
+        INSTALL_RPATH "$ORIGIN/lib"
+        BUILD_WITH_INSTALL_RPATH FALSE)
 endif()
  
 if(OPENMEI_VENDOR_DLLS)
