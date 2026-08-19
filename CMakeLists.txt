@@ -13,7 +13,7 @@
 
 cmake_minimum_required(VERSION 3.21)   # 3.21 for $<TARGET_RUNTIME_DLLS:...>
 
- -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 #  Version
 #
 #  Derived from the most recent git tag so a release artefact cannot disagree
