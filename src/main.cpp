@@ -397,12 +397,7 @@ namespace mei::ui {
         if (!ImGui::BeginMainMenuBar()) return;
 
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open Configuration...", "Ctrl+O")) {
-                app.setStatus(Severity::Info, "Configuration load not implemented yet.");
-            }
-            if (ImGui::MenuItem("Save Configuration", "Ctrl+S")) {
-                app.setStatus(Severity::Info, "Configuration save not implemented yet.");
-            }
+            
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Alt+F4")) app.running = false;
             ImGui::EndMenu();
