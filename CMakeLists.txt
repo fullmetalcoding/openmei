@@ -260,7 +260,9 @@ set(OPENMEI_SOURCES
     # you validate the measurement chain against known ground truth.
     src/camera/backends/synthetic_backend.h
     src/camera/backends/synthetic_backend.cpp
-   # src/camera/backends/ser_replay_backend.cpp  # replay a SER capture
+    src/camera/backends/ser_backend.cpp  # replay a SER capture
+    src/camera/backends/ser_reader.cpp
+    src/camera/backends/ser_reader.h
 
     # --- measurement --------------------------------------------------------
     src/dimm/centroid.cpp        # background subtraction, thresholding, 1st moment
