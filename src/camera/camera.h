@@ -369,4 +369,29 @@ namespace mei {
     void setSerReplayFile(const std::string& path);
     std::string serReplayFile();
 
+    // Timing the SER format cannot carry.
+    //
+    // SER records no exposure time at all, and the timestamp trailer -- the only
+    // source of frame timing -- is optional. A file lacking both is silent about
+    // everything the exposure-bias correction depends on, so the operator has to
+    // supply it. Guessing produces a plausible seeing value founded on nothing,
+    // which is the failure mode this instrument is least able to detect.
+    struct SerTiming {
+        // Exposure actually used at capture. Never present in the file.
+        int64_t exposureUs = 5000;
+
+        // Frame interval to assume when the file has no timestamp trailer. Ignored
+        // when one is present, since a measured interval always beats a declared
+        // one.
+        double  assumedIntervalMs = 20.0;
+
+        // Set by the reader, not the user: true once a file without a trailer has
+        // been opened, so the UI can insist on the values above rather than let
+        // them pass as defaults.
+        bool    intervalWasAssumed = false;
+    };
+
+    void      setSerTiming(const SerTiming&);
+    SerTiming serTiming();
+
 } // namespace mei

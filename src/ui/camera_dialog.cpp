@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL_dialog.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -149,29 +150,72 @@ namespace mei::ui {
                     ImGui::Text("%d x %d, %d frames, %d-bit",
                         h.width, h.height, h.frameCount, h.pixelDepthPerPlane);
 
-                    if (det.haveTimestamps && det.medianIntervalMs > 0.0) {
-                        const double fps = 1000.0 / det.medianIntervalMs;
-                        const double durS = det.medianIntervalMs * h.frameCount / 1000.0;
-                        ImGui::Text("%.2f ms between frames (%.1f fps), %.0f s total",
-                            det.medianIntervalMs, fps, durS);
+                    // SER carries no exposure time at all, and the timestamp
+                    // trailer that carries frame timing is optional. Whatever the
+                    // file cannot say, the operator must -- guessing yields a
+                    // plausible seeing value founded on nothing.
+                    SerTiming timing = serTiming();
+                    bool timingChanged = false;
 
-                        // SER has no field for exposure time. The interval is the
-                        // only timing the file carries, so the duty cycle -- which
-                        // governs how well a synthesized 2t leg approximates a real
-                        // one -- cannot be determined from the file alone.
-                        ImGui::TextColored(ImVec4(0.90f, 0.70f, 0.25f, 1.0f),
-                            "Exposure is not recorded by the SER format.");
-                        ImGui::TextWrapped(
-                            "Set it to match the capture in Settings > Statistics. If the "
-                            "exposure is much shorter than the %.1f ms interval, the "
-                            "duty cycle is low and the synthesized 2t leg of the "
-                            "exposure-bias correction will be unreliable.",
-                            det.medianIntervalMs);
+                    const bool haveInterval = det.haveTimestamps && det.medianIntervalMs > 0.0;
+                    double intervalMs = haveInterval ? det.medianIntervalMs
+                        : timing.assumedIntervalMs;
+
+                    if (haveInterval) {
+                        const double fps = 1000.0 / intervalMs;
+                        const double durS = intervalMs * h.frameCount / 1000.0;
+                        ImGui::Text("%.2f ms between frames (%.1f fps), %.0f s total",
+                            intervalMs, fps, durS);
                     }
                     else {
+                        ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f),
+                            "No timestamp trailer: this file does not record when its "
+                            "frames were taken.");
+                        float iv = float(timing.assumedIntervalMs);
+                        ImGui::SetNextItemWidth(140);
+                        if (ImGui::InputFloat("Frame interval (ms)", &iv, 0.5f, 5.0f, "%.2f")) {
+                            timing.assumedIntervalMs = std::max(0.001, double(iv));
+                            timingChanged = true;
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("= %.1f fps", 1000.0 / std::max(0.001, double(iv)));
+                        intervalMs = std::max(0.001, double(iv));
+                    }
+
+                    float expMs = float(timing.exposureUs) / 1000.0f;
+                    ImGui::SetNextItemWidth(140);
+                    if (ImGui::InputFloat("Exposure (ms)", &expMs, 0.1f, 1.0f, "%.3f")) {
+                        timing.exposureUs = int64_t(std::max(0.001f, expMs) * 1000.0f);
+                        timingChanged = true;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(never recorded by SER -- enter what the "
+                        "capture used)");
+
+                    if (timingChanged) setSerTiming(timing);
+
+                    // Duty cycle governs how well a synthesized 2t leg approximates
+                    // a real continuous exposure. It is exact at 100% and degrades
+                    // below; the panel warns under 50%.
+                    const double duty = (double(timing.exposureUs) / 1000.0) / intervalMs;
+                    if (duty > 1.02) {
+                        ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f),
+                            "Exposure exceeds the frame interval -- one of these two "
+                            "numbers is wrong.");
+                    }
+                    else if (duty < 0.5) {
                         ImGui::TextColored(ImVec4(0.90f, 0.70f, 0.25f, 1.0f),
-                            "No timestamp trailer -- frame timing is unknown and a "
-                            "fixed rate will be assumed.");
+                            "Duty cycle %.0f%%: the synthesized 2t leg will understate "
+                            "the exposure-bias correction.", duty * 100.0);
+                    }
+                    else {
+                        ImGui::TextDisabled("Duty cycle %.0f%%", duty * 100.0);
+                    }
+
+                    if (!haveInterval) {
+                        ImGui::TextColored(ImVec4(0.90f, 0.70f, 0.25f, 1.0f),
+                            "Both values above are assumptions. Seeing derived from "
+                            "this file is only as good as they are.");
                     }
 
                     if (!h.instrument.empty())

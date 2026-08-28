@@ -24,6 +24,7 @@ namespace mei {
 
         std::mutex  g_fileMutex;
         std::string g_file;
+        SerTiming   g_timing;
 
     } // namespace
 
@@ -35,6 +36,20 @@ namespace mei {
     std::string serReplayFile() {
         std::lock_guard<std::mutex> lk(g_fileMutex);
         return g_file;
+    }
+
+    void setSerTiming(const SerTiming& t) {
+        std::lock_guard<std::mutex> lk(g_fileMutex);
+        // intervalWasAssumed is observed, not chosen: preserve whatever the last
+        // opened file established rather than letting a UI write clear it.
+        const bool assumed = g_timing.intervalWasAssumed;
+        g_timing = t;
+        g_timing.intervalWasAssumed = assumed;
+    }
+
+    SerTiming serTiming() {
+        std::lock_guard<std::mutex> lk(g_fileMutex);
+        return g_timing;
     }
 
     namespace {
@@ -61,8 +76,25 @@ namespace mei {
                 caps_.hostUsb = UsbSpeed::Unknown;
                 caps_.cameraUsb = UsbSpeed::Unknown;
 
-                intervalMs_ = rd_->detection().medianIntervalMs > 0.0
-                    ? rd_->detection().medianIntervalMs : 20.0;
+                // A measured interval always wins. Without one, use the value the
+                // operator supplied -- and record that it was supplied, so every number
+                // derived from it can be marked as resting on an assumption rather than
+                // a measurement.
+                const SerTiming t = serTiming();
+                if (rd_->detection().medianIntervalMs > 0.0) {
+                    intervalMs_ = rd_->detection().medianIntervalMs;
+                    intervalAssumed_ = false;
+                }
+                else {
+                    intervalMs_ = std::max(0.001, t.assumedIntervalMs);
+                    intervalAssumed_ = true;
+                }
+                exposureUs_ = std::max<int64_t>(1, t.exposureUs);
+
+                {
+                    std::lock_guard<std::mutex> lk(g_fileMutex);
+                    g_timing.intervalWasAssumed = intervalAssumed_;
+                }
             }
 
             ~SerCamera() override { stop(); }
@@ -182,7 +214,10 @@ namespace mei {
                 // SER stores samples right-aligned, unlike the left-aligned convention
                 // several camera SDKs use -- so no shift, whatever the source camera did.
                 m.sampleShift = 0;
-                m.exposureUs = int64_t(intervalMs_ * 1000.0);
+                // The operator's exposure, not the frame interval. Those are the same
+                // thing only at 100% duty cycle, and conflating them silently corrupts
+                // the exposure-bias correction -- which is a third of the answer.
+                m.exposureUs = exposureUs_;
                 m.gain = 0.0;
                 // The recording's own time, not now: the seeing history and every
                 // logged record should carry when the light arrived, not when it was
@@ -255,6 +290,8 @@ namespace mei {
             size_t   frameBytes_ = 0;
             uint64_t sequence_ = 0;
             double   intervalMs_ = 20.0;
+            int64_t  exposureUs_ = 5000;
+            bool     intervalAssumed_ = false;
             int64_t  nextDueNs_ = 0;
 
             std::atomic<bool> streaming_{ false };
