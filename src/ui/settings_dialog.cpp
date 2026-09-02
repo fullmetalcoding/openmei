@@ -394,7 +394,8 @@ namespace mei::ui {
         int cm = int(r.coefficients);
         if (ImGui::Combo("Model", &cm,
             "Sarazin & Roddier (0.179)\0"
-            "Sarazin & Roddier mini (0.182)\0"
+            "Yu/Sasiela\0"
+            "Sarazin & Roddier corrected (0.182)\0"
             "Manual K\0"))
             r.coefficients = CoefficientModel(cm);
 

@@ -230,6 +230,7 @@ namespace mei {
     enum class CoefficientModel {
         SarazinRoddier,       // 0.179 leading coefficient
         SarazinRoddierMini,   // 0.182 -- the mini-DIMM correction
+        YuSasiela,               //       -- full coeffs from [Yuu 2020], appropriate for all DIMMs
         Manual                // K_l and K_t supplied directly
     };
 
