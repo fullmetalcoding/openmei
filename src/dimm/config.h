@@ -228,10 +228,10 @@ namespace mei {
     // paper via Manual if you need them. Reference check: at b = 2.5 the G-tilt
     // coefficients are K_l = 0.1956, K_t = 0.1270.
     enum class CoefficientModel {
-        SarazinRoddier,       // 0.179 leading coefficient
-        SarazinRoddierMini,   // 0.182 -- the mini-DIMM correction
-        YuSasiela,               //       -- full coeffs from [Yuu 2020], appropriate for all DIMMs
-        Manual                // K_l and K_t supplied directly
+        SarazinRoddier     = 0,   // 0.179 leading coefficient
+        SarazinRoddierMini = 1,   // 0.182 -- the mini-DIMM correction
+        Manual             = 2,   // K_l and K_t supplied directly
+        YuSasiela          = 3    // full coeffs from [Yuu 2020], appropriate for all DIMMs
     };
 
     struct ReportingConfig {
