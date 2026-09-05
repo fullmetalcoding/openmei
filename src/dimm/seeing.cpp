@@ -92,7 +92,7 @@ ResponseCoefficients yuSasielaCoefficients(double b)
 
     const double fTran =
         hypergeometricPFQ(
-            std::array{ -5.0 / 6.0, 5.0 / 6.0, 1.0 / 6.0 },
+            std::array{ -5.0 / 6.0, 5.0 / 2.0, 1.0 / 6.0 },
             std::array{ 5.0, 3.0 },
             z);
 
@@ -160,7 +160,8 @@ ResponseCoefficients responseCoefficients(const OpticsConfig& o,
         out.warning =
             "d/D < 2: outside the validated range for the "
             "Sarazin & Roddier approximation; select Yu/Sasiela "
-            "for close-spaced sub-apertures";
+            "for close-spaced sub-apertures. Note that geometry"
+            "errors are amplified at small d/D regardless of coefficient model.";
     }
     return out;
 }
