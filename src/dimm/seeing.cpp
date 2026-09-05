@@ -2,10 +2,44 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <limits>
 
 namespace mei {
 
 namespace {
+    template <size_t P, size_t Q>
+    double hypergeometricPFQ(const std::array<double, P>& a,
+        const std::array<double, Q>& b,
+        double z)
+    {
+        constexpr int kMaxIterations = 10000;
+        constexpr double kTolerance = 1e-14;
+
+        double sum = 1.0;
+        double term = 1.0;
+
+        for (int n = 1; n <= kMaxIterations; ++n) {
+            term *= z / double(n);
+
+            const double nm1 = double(n - 1);
+
+            for (double ai : a)
+                term *= ai + nm1;
+
+            for (double bi : b)
+                term /= bi + nm1;
+
+            sum += term;
+
+            if (std::abs(term) <=
+                kTolerance * std::max(1.0, std::abs(sum))) {
+                return sum;
+            }
+        }
+
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
 }
 
@@ -23,6 +57,7 @@ const char* toString(CoefficientModel m) {
     switch (m) {
         case CoefficientModel::SarazinRoddierMini: return "Sarazin & Roddier (0.182)";
         case CoefficientModel::Manual:             return "manual K";
+        case CoefficientModel::YuSasiela:          return "Yu/Sasiela (full treatment)";
         default:                                   return "Sarazin & Roddier (0.179)";
     }
 }
@@ -33,6 +68,57 @@ const char* toString(WedgeOrientation w) {
         case WedgeOrientation::ExplicitAngle:  return "explicit angle";
         default:                               return "along baseline";
     }
+}
+ResponseCoefficients yuSasielaCoefficients(double b)
+{
+    ResponseCoefficients out;
+
+    // b = d/D. Non-overlapping equal circular subapertures require d >= D.
+    if (b < 1.0) {
+        out.warning =
+            "Yu/Sasiela coefficients require d/D >= 1; "
+            "sub-apertures would overlap for this geometry";
+        return out;
+    }
+
+    const double x = 1.0 / b;     // D/d
+    const double z = x * x;
+
+    const double fLong =
+        hypergeometricPFQ(
+            std::array{ -5.0 / 6.0, 5.0 / 2.0, 1.0 / 6.0, 2.0 / 3.0 },
+            std::array{ 5.0, 3.0, -1.0 / 3.0 },
+            z);
+
+    const double fTran =
+        hypergeometricPFQ(
+            std::array{ -5.0 / 6.0, 5.0 / 2.0, 1.0 / 6.0 },
+            std::array{ 5.0, 3.0 },
+            z);
+
+    if (!std::isfinite(fLong) || !std::isfinite(fTran)) {
+        out.warning = "Yu/Sasiela coefficient evaluation did not converge";
+        return out;
+    }
+
+    const double x13 = std::cbrt(x);
+
+    out.kLong =
+        0.364 * (1.0 - 0.531 * x13 * fLong);
+
+    out.kTran =
+        0.364 * (1.0 - 0.799 * x13 * fTran);
+
+    out.valid =
+        out.kLong > 0.0 &&
+        out.kTran > 0.0;
+
+    if (!out.valid) {
+        out.warning =
+            "Yu/Sasiela geometry produced a non-positive response coefficient";
+    }
+
+    return out;
 }
 
 ResponseCoefficients responseCoefficients(const OpticsConfig& o,
@@ -51,6 +137,8 @@ ResponseCoefficients responseCoefficients(const OpticsConfig& o,
         if (!out.valid) out.warning = "manual coefficients must be positive";
         return out;
     }
+    if (r.coefficients == CoefficientModel::YuSasiela)
+        return yuSasielaCoefficients(b);
 
     // Sarazin & Roddier, rearranged into K form. The leading 0.179 becomes
     // 0.182 in the mini-DIMM analysis, which argues the original is an
@@ -69,9 +157,11 @@ ResponseCoefficients responseCoefficients(const OpticsConfig& o,
     } else if (b < 2.0) {
         // Below b = 2 the two differenced terms are close in size, so errors in
         // D and d amplify, and the approximation itself degrades.
-        out.warning = "d/D < 2: outside the validated range for this "
-                      "approximation. Errors in mask geometry are amplified "
-                      "here; consider Tokovinin's K(b) coefficients instead.";
+        out.warning =
+            "d/D < 2: outside the validated range for the "
+            "Sarazin & Roddier approximation; select Yu/Sasiela "
+            "for close-spaced sub-apertures. Note that geometry"
+            "errors are amplified at small d/D regardless of coefficient model.";
     }
     return out;
 }

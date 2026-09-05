@@ -223,14 +223,14 @@ namespace mei {
     };
 
     // Sarazin & Roddier is the standard approximation and what most amateur DIMMs
-    // use. Tokovinin's coefficients are more accurate, especially at small b, but
-    // the published K(b) fit is not reproduced here -- enter the values from the
-    // paper via Manual if you need them. Reference check: at b = 2.5 the G-tilt
+    // use. 
+    // Reference check: at b = 2.5 the G-tilt-for-contrast
     // coefficients are K_l = 0.1956, K_t = 0.1270.
     enum class CoefficientModel {
-        SarazinRoddier,       // 0.179 leading coefficient
-        SarazinRoddierMini,   // 0.182 -- the mini-DIMM correction
-        Manual                // K_l and K_t supplied directly
+        SarazinRoddier     = 0,   // 0.179 leading coefficient
+        SarazinRoddierMini = 1,   // 0.182 -- the mini-DIMM correction
+        Manual             = 2,   // K_l and K_t supplied directly
+        YuSasiela          = 3    // full coeffs from [Yu, et.al. 2020], appropriate for all nondegenerate DIMMs (d > D)
     };
 
     struct ReportingConfig {
